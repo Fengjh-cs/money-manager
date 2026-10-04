@@ -509,6 +509,47 @@ class LedgerService {
     }));
   }
 
+  /** 批量导入凭证:rows = [{seq, date, type, summary, code, debit, credit}],按 seq 分组;单张失败不中断 */
+  importVouchers(rows) {
+    this._requireAccountant();
+    const groups = new Map();
+    const order = [];
+    for (const r of rows) {
+      const seq = String(r.seq || '').trim();
+      if (!seq) continue;
+      if (!groups.has(seq)) {
+        groups.set(seq, { date: String(r.date || '').trim(), type: (r.type || '记').trim(), rows: [] });
+        order.push(seq);
+      }
+      groups.get(seq).rows.push(r);
+    }
+    const results = { imported: 0, errors: [] };
+    for (const seq of order) {
+      const g = groups.get(seq);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(g.date)) { results.errors.push(`序号 ${seq}: 日期格式应为 YYYY-MM-DD`); continue; }
+      const entries = [];
+      let rowError = false;
+      for (const r of g.rows) {
+        const code = String(r.code || '').trim();
+        if (!code) { rowError = true; results.errors.push(`序号 ${seq}: 科目编码为空`); continue; }
+        const acct = this.db.get('SELECT * FROM accounts WHERE ledger_id=? AND code=?', [this.ledger.id, code]);
+        if (!acct) { rowError = true; results.errors.push(`序号 ${seq}: 科目 ${code} 不存在`); continue; }
+        entries.push({ summary: r.summary || '', account_id: acct.id, debit: r.debit || '', credit: r.credit || '' });
+      }
+      if (rowError) continue;
+      if (entries.length < 2) { results.errors.push(`序号 ${seq}: 分录不足 2 条`); continue; }
+      try {
+        this.createVoucher({ voucher_date: g.date, voucher_type: g.type, entries });
+        results.imported++;
+      } catch (e) {
+        results.errors.push(`序号 ${seq}: ${e.message}`);
+      }
+    }
+    this._audit('导入凭证', 'voucher', null, null, { imported: results.imported, errors: results.errors });
+    this.db.save();
+    return results;
+  }
+
   _transition(id, action, guard, apply) {
     const v = this.db.get('SELECT * FROM vouchers WHERE id=? AND ledger_id=?', [id, this.ledger.id]);
     if (!v) throw new Error('凭证不存在');

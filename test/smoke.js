@@ -252,6 +252,17 @@ async function main() {
   check('生成调汇凭证', reval.generated === true);
   check('汇兑收益 40', reval.net === '40.00', reval.net);
 
+  console.log('— 凭证批量导入 —');
+  const vImport = svc.importVouchers([
+    { seq: '1', date: '2026-01-10', type: '记', summary: '购办公用品', code: '6602', debit: '200', credit: '' },
+    { seq: '1', date: '2026-01-10', type: '记', summary: '购办公用品', code: '1001', debit: '', credit: '200' },
+    { seq: '2', date: '2026-01-11', type: '记', summary: '收货款', code: '1001', debit: '500', credit: '' },
+    { seq: '2', date: '2026-01-11', type: '记', summary: '收货款', code: '6001', debit: '', credit: '400' },
+    { seq: '3', date: '2026-01-12', type: '记', summary: 'x', code: '9999', debit: '1', credit: '' },
+    { seq: '3', date: '2026-01-12', type: '记', summary: 'x', code: '1001', debit: '', credit: '1' },
+  ]);
+  check('导入成功 1 张、失败 2 张', vImport.imported === 1 && vImport.errors.length === 2, JSON.stringify(vImport));
+
   db.close();
   fs.rmSync(tmp, { recursive: true, force: true });
 

@@ -190,6 +190,39 @@ function registerIpc() {
     'voucher:update': (opts) => service.updateVoucher(opts.id, opts),
     'voucher:get': (id) => service.getVoucher(id),
     'voucher:list': (opts) => service.listVouchers(opts),
+
+    // 批量导入凭证(CSV:凭证序号,凭证日期,凭证类型,摘要,科目编码,借方金额,贷方金额)
+    'voucher:import': async () => {
+      const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+        properties: ['openFile'],
+        filters: [{ name: 'CSV 文件', extensions: ['csv'] }],
+      });
+      if (canceled || !filePaths || !filePaths.length) return { canceled: true };
+      const text = fs.readFileSync(filePaths[0], 'utf8').replace(/^﻿/, '');
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      if (!lines.length) throw new Error('文件为空');
+      const rows = [];
+      for (let i = 0; i < lines.length; i++) {
+        const cells = lines[i].split(',').map(c => c.trim());
+        if (i === 0 && cells[0] && /序号|编号|凭证|seq/i.test(cells[0])) continue; // 跳过表头
+        if (cells.length < 7) continue;
+        rows.push({ seq: cells[0], date: cells[1], type: cells[2], summary: cells[3], code: cells[4], debit: cells[5], credit: cells[6] });
+      }
+      if (!rows.length) throw new Error('未解析到有效数据(格式:凭证序号,凭证日期,凭证类型,摘要,科目编码,借方金额,贷方金额)');
+      return service.importVouchers(rows);
+    },
+
+    // 导出凭证导入模板
+    'voucher:template': async () => {
+      const content = '凭证序号,凭证日期,凭证类型,摘要,科目编码,借方金额,贷方金额\r\n1,2026-01-05,记,收到投资,1001,1000.00,\r\n1,2026-01-05,记,收到投资,4001,,1000.00\r\n';
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        defaultPath: '凭证导入模板.csv',
+        filters: [{ name: 'CSV 文件', extensions: ['csv'] }],
+      });
+      if (canceled || !filePath) return { canceled: true };
+      fs.writeFileSync(filePath, '﻿' + content, 'utf8');
+      return { saved: true, path: filePath };
+    },
     'voucher:review': (id) => service.reviewVoucher(id),
     'voucher:unreview': (id) => service.unreviewVoucher(id),
     'voucher:post': (id) => service.postVoucher(id),

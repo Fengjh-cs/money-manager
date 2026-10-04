@@ -283,6 +283,8 @@ function voucherListHtml() {
           <option value="voided">已作废</option>
         </select>
         <button class="primary" data-action="voucher:filter">查询</button>
+        <button data-action="voucher:import" ${isAccountant() ? '' : 'hidden'}>批量导入</button>
+        <button data-action="voucher:template" ${isAccountant() ? '' : 'hidden'}>下载模板</button>
       </div>
       <div id="voucher-list">${''}</div>
     </div>`;
@@ -1032,6 +1034,22 @@ async function handleAction(action, id, arg) {
       break;
     }
     case 'voucher:filter': loadVoucherList(); break;
+    case 'voucher:import': {
+      try {
+        const res = await call('voucher:import', null);
+        if (res.canceled) break;
+        let msg = `导入完成:成功 ${res.imported} 张凭证`;
+        if (res.errors.length) msg += `,失败 ${res.errors.length} 张`;
+        toast(msg, res.errors.length ? 'err' : 'ok');
+        if (res.errors.length) alert('以下凭证导入失败:\n' + res.errors.join('\n'));
+        loadVoucherList();
+      } catch (e) { toast(e.message, 'err'); }
+      break;
+    }
+    case 'voucher:template': {
+      await call('voucher:template', null);
+      break;
+    }
     case 'voucher:new': renderVoucherEditor(null); break;
     case 'voucher:view': {
       const v = await call('voucher:get', id);
