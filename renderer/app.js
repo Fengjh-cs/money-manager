@@ -773,8 +773,10 @@ function openingHtml() {
         <label>金额</label><input id="ob-amount" placeholder="0.00" style="width:140px">
         <label>期间</label><input id="ob-period" type="month" value="${currentPeriod()}" style="width:150px">
         <button class="primary" data-action="opening:save">保存</button>
+        <button data-action="opening:import">批量导入</button>
+        <button data-action="opening:template">下载模板</button>
       </div>
-      <p class="hint">期初余额仅录入末级科目。方向为「贷方」时,系统按负的借方余额存储。</p>` : '<p class="hint">审计角色为只读,不能录入期初余额。</p>'}
+      <p class="hint">期初余额仅录入末级科目。方向为「贷方」时,系统按负的借方余额存储。可「下载模板」按格式填好后「批量导入」。</p>` : '<p class="hint">审计角色为只读,不能录入期初余额。</p>'}
       <div id="ob-list"></div>
     </div>`;
 }
@@ -1189,6 +1191,23 @@ async function handleAction(action, id, arg) {
         toast('期初余额已保存', 'ok');
         loadOpening();
       } catch (e) { toast(e.message, 'err'); }
+      break;
+    }
+    case 'opening:import': {
+      const period = document.getElementById('ob-period').value;
+      try {
+        const res = await call('opening:import', period);
+        if (res.canceled) break;
+        let msg = `导入完成:成功 ${res.imported} 条`;
+        if (res.errors.length) msg += `,失败 ${res.errors.length} 条`;
+        toast(msg, res.errors.length ? 'err' : 'ok');
+        if (res.errors.length) alert('以下行导入失败:\n' + res.errors.join('\n'));
+        loadOpening();
+      } catch (e) { toast(e.message, 'err'); }
+      break;
+    }
+    case 'opening:template': {
+      await call('opening:template', null);
       break;
     }
     case 'rate:save': {

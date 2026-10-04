@@ -231,6 +231,14 @@ async function main() {
   check('辅助明细有记录', auxLedger.lines.length === 1, '行数=' + auxLedger.lines.length);
   assertThrows('已使用的辅助对象不能删除', () => svc.deleteAuxItem(aux.id), '不能删除');
 
+  console.log('— 期初余额批量导入 —');
+  const imp = svc.importOpeningBalances('2026-01', [
+    { code: '1002', debit: '100', credit: '' },
+    { code: '1001', debit: '300', credit: '' },
+    { code: '4001', debit: '', credit: '300' },
+  ]);
+  check('导入成功 2 条、报错 1 条', imp.imported === 2 && imp.errors.length === 1, JSON.stringify(imp));
+
   db.close();
   fs.rmSync(tmp, { recursive: true, force: true });
 

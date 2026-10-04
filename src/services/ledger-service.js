@@ -267,6 +267,41 @@ class LedgerService {
     return this.db.all('SELECT * FROM opening_balances WHERE ledger_id=? AND period=?', [this.ledger.id, period]);
   }
 
+  /** 批量导入期初余额:rows = [{code, debit, credit}],逐行校验,错误不中断 */
+  importOpeningBalances(period, rows) {
+    this._requireAccountant();
+    this._requirePeriodOpen(period);
+    const results = { imported: 0, errors: [] };
+    this.db.exec('BEGIN');
+    try {
+      rows.forEach((row, i) => {
+        const code = String(row.code || '').trim();
+        if (!code) return;
+        try {
+          const acct = this.db.get('SELECT * FROM accounts WHERE ledger_id=? AND code=?', [this.ledger.id, code]);
+          if (!acct) { results.errors.push(`第${i + 1}行:科目 ${code} 不存在`); return; }
+          if (!acct.is_leaf) { results.errors.push(`第${i + 1}行:${code} ${acct.name} 不是末级科目`); return; }
+          const debit = row.debit ? M.parseAmount(row.debit) : 0n;
+          const credit = row.credit ? M.parseAmount(row.credit) : 0n;
+          if (debit > 0n && credit > 0n) { results.errors.push(`第${i + 1}行:${code} 借贷不能同时填`); return; }
+          if (debit === 0n && credit === 0n) return;
+          const amount = debit > 0n ? debit : -credit;
+          this.db.run('INSERT OR REPLACE INTO opening_balances (ledger_id, account_id, period, amount, currency_code) VALUES (?,?,?,?,?)', [this.ledger.id, acct.id, period, toSafeNumber(amount), null]);
+          results.imported++;
+        } catch (e) {
+          results.errors.push(`第${i + 1}行(${code}): ${e.message}`);
+        }
+      });
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+    this._audit('导入期初余额', 'period', period, null, { imported: results.imported, errors: results.errors });
+    this.db.save();
+    return results;
+  }
+
   // ================= 汇率 =================
   setExchangeRate(currencyCode, period, rate) {
     this._requireAccountant();

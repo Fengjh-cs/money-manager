@@ -133,6 +133,40 @@ function registerIpc() {
     'opening:set': (opts) => service.setOpeningBalance(opts.account_id, opts.period, opts.amount, opts.currency_code),
     'opening:list': (period) => service.listOpeningBalances(period),
 
+    // 批量导入期初余额(CSV:科目编码,科目名称,借方余额,贷方余额)
+    'opening:import': async (period) => {
+      const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+        properties: ['openFile'],
+        filters: [{ name: 'CSV 文件', extensions: ['csv'] }],
+      });
+      if (canceled || !filePaths || !filePaths.length) return { canceled: true };
+      const text = fs.readFileSync(filePaths[0], 'utf8').replace(/^﻿/, '');
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      if (!lines.length) throw new Error('文件为空');
+      const rows = [];
+      for (let i = 0; i < lines.length; i++) {
+        const cells = lines[i].split(',').map(c => c.trim());
+        if (i === 0 && cells[0] && /编码|科目|code/i.test(cells[0])) continue; // 跳过表头
+        if (cells.length < 4) continue;
+        rows.push({ code: cells[0], debit: cells[2], credit: cells[3] });
+      }
+      if (!rows.length) throw new Error('未解析到有效数据(格式:科目编码,科目名称,借方余额,贷方余额)');
+      return service.importOpeningBalances(period, rows);
+    },
+
+    // 导出期初余额模板
+    'opening:template': async () => {
+      const accounts = service.listAccounts().filter(a => a.is_leaf);
+      const content = '科目编码,科目名称,借方余额,贷方余额\r\n' + accounts.map(a => `${a.code},${a.name},,`).join('\r\n');
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        defaultPath: '期初余额模板.csv',
+        filters: [{ name: 'CSV 文件', extensions: ['csv'] }],
+      });
+      if (canceled || !filePath) return { canceled: true };
+      fs.writeFileSync(filePath, '﻿' + content, 'utf8');
+      return { saved: true, path: filePath };
+    },
+
     'rate:set': (opts) => service.setExchangeRate(opts.currency_code, opts.period, opts.rate),
     'rate:list': (period) => service.listExchangeRates(period),
     'currency:list': () => service.listCurrencies(),
