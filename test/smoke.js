@@ -26,6 +26,9 @@ async function main() {
   const db = await openDatabase(path.join(tmp, 'ledger.db'));
   const svc = new LedgerService(db, tmp);
 
+  console.log('— 初始化用户 —');
+  check('建账前即有默认用户(会计+审计)', svc.listUsers().length === 2, '用户数=' + svc.listUsers().length);
+
   console.log('— 建账 —');
   const ledger = svc.createLedger({ name: '测试公司', accounting_standard: '企业会计准则', opening_period: '2026-01' });
   check('账套创建', !!ledger && svc.hasLedger());

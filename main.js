@@ -47,7 +47,7 @@ function createWindow() {
       await new Promise(r => setTimeout(r, 2500));
       try {
         const r = await win.webContents.executeJavaScript(
-          `JSON.stringify({ api: typeof window.api, appLen: (document.getElementById('app') || {}).innerHTML ? document.getElementById('app').innerHTML.length : 0 })`
+          `JSON.stringify({ api: typeof window.api, appLen: (document.getElementById('app') || {}).innerHTML ? document.getElementById('app').innerHTML.length : 0, roleBtns: document.querySelectorAll('.role-btn').length })`
         );
         console.log('[dev-verify] 延迟检查:', r);
       } catch (e) {

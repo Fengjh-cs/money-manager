@@ -43,7 +43,9 @@ class LedgerService {
     this.snapDir = path.join(dataDir, 'snapshots');
     this.user = null;
     this.ledger = null;
-    this._seedCurrencies();
+    const seededCur = this._seedCurrencies();
+    const seededUsers = this._seedUsers();
+    if (seededCur || seededUsers) this.db.save();
     this._loadActiveLedger();
   }
 
@@ -55,7 +57,21 @@ class LedgerService {
         this.db.run('INSERT INTO currencies (code, name, symbol, precision, enabled) VALUES (?,?,?,?,1)',
           [c.code, c.name, c.symbol, c.precision]);
       }
+      return true;
     }
+    return false;
+  }
+
+  /** 默认用户(会计/审计)在初始化时就写入,确保首次登录(尚未建账)也能选身份 */
+  _seedUsers() {
+    const n = this.db.get('SELECT COUNT(*) AS c FROM users').c;
+    if (n === 0) {
+      const t = now();
+      this.db.run('INSERT OR IGNORE INTO users (id, username, password_hash, role, created_at) VALUES (?,?,?,?,?)', [uuid(), '会计', '', 'accountant', t]);
+      this.db.run('INSERT OR IGNORE INTO users (id, username, password_hash, role, created_at) VALUES (?,?,?,?,?)', [uuid(), '审计', '', 'auditor', t]);
+      return true;
+    }
+    return false;
   }
 
   _loadActiveLedger() {
