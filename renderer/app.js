@@ -145,6 +145,19 @@ function render(html) {
   appEl().innerHTML = html;
 }
 
+/* ---------- 解锁 ---------- */
+function renderUnlock() {
+  render(`
+    <div class="login-wrap">
+      <div class="login-card">
+        <h1>记账程序</h1>
+        <div class="sub">数据已加密,请输入数据库密码解锁</div>
+        <input type="password" id="unlock-password" placeholder="数据库密码" style="width:100%;margin:14px 0 10px">
+        <button class="primary" data-action="db:unlock" style="width:100%">解锁</button>
+      </div>
+    </div>`);
+}
+
 /* ---------- 登录 ---------- */
 function renderLogin() {
   const buttons = state.users.map(u => `
@@ -182,6 +195,7 @@ function renderSetup() {
         <div class="form-row"><label>本位币</label>
           <select id="setup-currency">${state.currencies.map(c => `<option value="${esc(c.code)}" ${c.code === 'CNY' ? 'selected' : ''}>${esc(c.name)}(${c.code})</option>`).join('')}</select>
         </div>
+        ${!isNew ? `<div class="form-row"><label>数据库密码(至少 4 位,用于解锁数据)</label><input type="password" id="setup-master" placeholder="设置数据库密码,请牢记"></div>` : ''}
         <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
           ${isNew ? '<button data-action="setup:cancel">返回</button>' : ''}
           <button class="primary" data-action="setup:submit">建立账套</button>
@@ -921,10 +935,30 @@ async function handleAction(action, id, arg) {
       const period = document.getElementById('setup-period').value;
       const currency = document.getElementById('setup-currency').value;
       if (!name.trim()) { toast('请填写公司名称', 'err'); break; }
-      state.ledger = await call('ledger:create', { name: name.trim(), accounting_standard: standard, opening_period: period, base_currency: currency });
+      let masterPassword = null;
+      const masterEl = document.getElementById('setup-master');
+      if (masterEl) {
+        masterPassword = masterEl.value;
+        if (!masterPassword || masterPassword.length < 4) { toast('请设置数据库密码(至少 4 位)', 'err'); break; }
+      }
+      state.ledger = await call('ledger:create', { name: name.trim(), accounting_standard: standard, opening_period: period, base_currency: currency, masterPassword });
       await refreshAccounts();
       toast('账套创建成功', 'ok');
       renderApp();
+      break;
+    }
+    case 'db:unlock': {
+      const password = document.getElementById('unlock-password').value;
+      if (!password) { toast('请输入数据库密码', 'err'); break; }
+      try {
+        const d = await call('db:unlock', { password });
+        state.users = d.users;
+        state.standards = d.standards;
+        state.currencies = d.currencies;
+        state.ledger = d.ledger;
+        if (d.hasLedger) await refreshAccounts();
+        renderLogin();
+      } catch (e) { toast(e.message, 'err'); }
       break;
     }
     case 'nav': {
@@ -1254,6 +1288,7 @@ document.addEventListener('change', (e) => {
 (async function init() {
   try {
     const d = await call('app:init');
+    if (d.locked) { renderUnlock(); return; }
     state.users = d.users;
     state.standards = d.standards;
     state.currencies = d.currencies;

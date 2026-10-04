@@ -10,6 +10,7 @@ const os = require('os');
 const path = require('path');
 const { openDatabase } = require('../src/db/database');
 const { LedgerService } = require('../src/services/ledger-service');
+const cryptoLib = require('../src/db/crypto');
 
 let passed = 0, failed = 0;
 function check(name, cond, extra) {
@@ -25,6 +26,32 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-'));
   const db = await openDatabase(path.join(tmp, 'ledger.db'));
   const svc = new LedgerService(db, tmp);
+
+  console.log('— 数据库加密(加解密) —');
+  const sealed = cryptoLib.sealSetup('mypassword');
+  const enc = cryptoLib.encrypt(Buffer.from('hello-world-data'), sealed.salt, sealed.key);
+  check('密文非明文', !enc.slice(0, 4).equals(Buffer.from('hello')));
+  check('解密还原', cryptoLib.decrypt(enc, sealed.key).toString() === 'hello-world-data');
+  const wrongKey = cryptoLib.deriveKey('wrong', sealed.salt);
+  let wrongThrew = false;
+  try { cryptoLib.decrypt(enc, wrongKey); } catch (e) { wrongThrew = true; }
+  check('错误密码解密失败', wrongThrew);
+  check('isEncrypted 识别', cryptoLib.isEncrypted(enc) === true);
+
+  console.log('— 加密落盘/读回 —');
+  const encDbPath = path.join(tmp, 'enc.db');
+  const encDb = await openDatabase(encDbPath, null);
+  const sealed2 = cryptoLib.sealSetup('pw123');
+  encDb.setCrypto(sealed2);
+  encDb.run('CREATE TABLE t(x)');
+  encDb.run('INSERT INTO t VALUES (1)');
+  encDb.save();
+  const raw = fs.readFileSync(encDbPath);
+  check('落盘为密文', cryptoLib.isEncrypted(raw) === true);
+  const encDb2 = await openDatabase(encDbPath, sealed2);
+  check('读回数据完整', encDb2.get('SELECT x FROM t').x === 1);
+  encDb.close();
+  encDb2.close();
 
   console.log('— 初始化用户 —');
   check('建账前即有默认用户(会计+审计)', svc.listUsers().length === 2, '用户数=' + svc.listUsers().length);

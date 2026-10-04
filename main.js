@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { openDatabase } = require('./src/db/database');
 const { LedgerService } = require('./src/services/ledger-service');
+const { isEncrypted, sealSetup, deriveKey, readSalt } = require('./src/db/crypto');
 
 // 自定义安全协议:用 app:// 加载本地资源,使 CSP 的 'self' 能正确生效
 const APP_SCHEME = 'app';
@@ -14,6 +15,9 @@ protocol.registerSchemesAsPrivileged([
 
 let win = null;
 let service = null;
+let dbPath = null;
+let dataDir = null;
+let cryptoInfo = null; // { salt, key } 或 null
 
 function createWindow() {
   win = new BrowserWindow({
@@ -48,7 +52,7 @@ function createWindow() {
       await new Promise(r => setTimeout(r, 2500));
       try {
         const r = await win.webContents.executeJavaScript(
-          `JSON.stringify({ api: typeof window.api, appLen: (document.getElementById('app') || {}).innerHTML ? document.getElementById('app').innerHTML.length : 0, roleBtns: document.querySelectorAll('.role-btn').length })`
+          `JSON.stringify({ api: typeof window.api, appLen: (document.getElementById('app') || {}).innerHTML ? document.getElementById('app').innerHTML.length : 0, roleBtns: document.querySelectorAll('.role-btn').length, unlock: !!document.getElementById('unlock-password') })`
         );
         console.log('[dev-verify] 延迟检查:', r);
       } catch (e) {
@@ -58,19 +62,44 @@ function createWindow() {
   }
 }
 
+/** 返回完整初始化数据(解锁后 / 已初始化时) */
+function fullInit() {
+  return {
+    hasLedger: service.hasLedger(),
+    ledger: service.getLedger(),
+    users: service.listUsers(),
+    standards: service.listStandards(),
+    currencies: service.listCurrencies(),
+  };
+}
+
 /**
  * IPC 白名单:渲染进程只能调用这里显式列出的方法。
  * 统一返回 { ok, data } 或 { ok:false, error },便于界面直接展示错误。
  */
 function registerIpc() {
   const handlers = {
-    'app:init': () => ({
-      hasLedger: service.hasLedger(),
-      ledger: service.getLedger(),
-      users: service.listUsers(),
-      standards: service.listStandards(),
-      currencies: service.listCurrencies(),
-    }),
+    'app:init': () => {
+      if (!service) return { locked: true };
+      return fullInit();
+    },
+
+    // 输入主密码解锁加密数据库
+    'db:unlock': async ({ password }) => {
+      if (service) return fullInit();
+      const buf = fs.readFileSync(dbPath);
+      const salt = readSalt(buf);
+      const key = deriveKey(password, salt);
+      let db;
+      try {
+        db = await openDatabase(dbPath, { salt, key });
+      } catch (e) {
+        throw new Error('数据库密码错误');
+      }
+      service = new LedgerService(db, dataDir);
+      cryptoInfo = { salt, key };
+      return fullInit();
+    },
 
     'login': ({ username, password }) => {
       const user = service.login(username, password);
@@ -78,7 +107,18 @@ function registerIpc() {
     },
     'password:change': ({ username, oldPassword, newPassword }) => service.changePassword(username, oldPassword, newPassword),
 
-    'ledger:create': (opts) => service.createLedger(opts),
+    'ledger:create': (opts) => {
+      const { masterPassword, ...rest } = opts;
+      const ledger = service.createLedger(rest);
+      // 首次建账时设置主密码 → 从此落盘为加密文件
+      if (masterPassword && !cryptoInfo) {
+        const sealed = sealSetup(masterPassword);
+        cryptoInfo = sealed;
+        service.db.setCrypto(sealed);
+        service.db.save();
+      }
+      return ledger;
+    },
     'ledger:list': () => service.listLedgers(),
     'ledger:switch': (id) => service.switchLedger(id),
 
@@ -185,11 +225,23 @@ app.whenReady().then(async () => {
     }
   });
 
-  const dataDir = app.isPackaged
+  dataDir = app.isPackaged
     ? path.join(app.getPath('userData'), 'data')
     : path.join(__dirname, 'data');
-  const db = await openDatabase(path.join(dataDir, 'ledger.db'));
-  service = new LedgerService(db, dataDir);
+  dbPath = path.join(dataDir, 'ledger.db');
+
+  // 若数据文件已加密,保持 service 为空,由渲染层展示「解锁」页
+  if (fs.existsSync(dbPath)) {
+    const buf = fs.readFileSync(dbPath);
+    if (!isEncrypted(buf)) {
+      const db = await openDatabase(dbPath, null);
+      service = new LedgerService(db, dataDir);
+    }
+  } else {
+    const db = await openDatabase(dbPath, null);
+    service = new LedgerService(db, dataDir);
+  }
+
   registerIpc();
   createWindow();
 

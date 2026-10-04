@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const initSqlJs = require('sql.js');
 const { schema } = require('./schema');
+const { encrypt, decrypt } = require('./crypto');
 
 /**
  * 数据库封装(基于 sql.js,纯 WASM,零原生编译依赖)
@@ -35,16 +36,23 @@ function atomicWrite(filePath, buffer) {
 }
 
 class Database {
-  constructor(db, filePath, SQL) {
+  constructor(db, filePath, SQL, cryptoInfo = null) {
     this._db = db;
     this._filePath = filePath;
     this._SQL = SQL;
+    this._crypto = cryptoInfo; // { salt, key } 或 null
   }
 
-  /** 从字节重新加载(用于回滚:把某个快照内容载入内存) */
+  /** 设置加密信息(建账时设置主密码后调用) */
+  setCrypto(cryptoInfo) {
+    this._crypto = cryptoInfo;
+  }
+
+  /** 从字节重新加载(用于回滚:把某个快照内容载入内存,自动解密) */
   loadFromBuffer(buffer) {
+    const plaintext = this._crypto ? decrypt(buffer, this._crypto.key) : buffer;
     this._db.close();
-    this._db = new this._SQL.Database(buffer);
+    this._db = new this._SQL.Database(plaintext);
   }
 
   /** 执行单条 SQL(可带参数) */
@@ -88,14 +96,16 @@ class Database {
     return Buffer.from(this._db.export());
   }
 
-  /** 原子写回磁盘 */
+  /** 原子写回磁盘(若已设置主密码则加密) */
   save() {
-    atomicWrite(this._filePath, this.export());
+    const data = this._crypto ? encrypt(this.export(), this._crypto.salt, this._crypto.key) : this.export();
+    atomicWrite(this._filePath, data);
   }
 
-  /** 复制一份当前库到指定路径(快照) */
+  /** 复制一份当前库到指定路径(快照,同样加密) */
   saveAs(snapshotPath) {
-    atomicWrite(snapshotPath, this.export());
+    const data = this._crypto ? encrypt(this.export(), this._crypto.salt, this._crypto.key) : this.export();
+    atomicWrite(snapshotPath, data);
   }
 
   close() {
@@ -110,19 +120,21 @@ class Database {
 /**
  * 打开(或新建)数据库。
  * @param {string} dbFilePath .db 文件路径
+ * @param {{salt: Buffer, key: Buffer}|null} cryptoInfo 加密信息;null 表示明文
  */
-async function openDatabase(dbFilePath) {
+async function openDatabase(dbFilePath, cryptoInfo = null) {
   const SQL = await initSqlJs({
     locateFile: (f) => path.join(path.dirname(require.resolve('sql.js')), f),
   });
   let db;
   if (fs.existsSync(dbFilePath)) {
-    const buf = fs.readFileSync(dbFilePath);
+    let buf = fs.readFileSync(dbFilePath);
+    if (cryptoInfo) buf = decrypt(buf, cryptoInfo.key); // 密钥错误会在此抛错
     db = new SQL.Database(buf);
   } else {
     db = new SQL.Database();
   }
-  const database = new Database(db, dbFilePath, SQL);
+  const database = new Database(db, dbFilePath, SQL, cryptoInfo);
   for (const stmt of schema) database.exec(stmt);
   migrate(database);
   return database;
