@@ -646,6 +646,59 @@ class LedgerService {
     };
   }
 
+  /**
+   * 现金流量表(简化直接法):把涉及现金/银行科目的收付,按对方科目归入经营/投资/筹资。
+   * 分类规则:筹资=借款/实收资本/资本公积/盈余公积/应付股利/应付利息;投资=长期资产(15~18)、
+   * 交易性金融资产、投资性房地产、应收股利/利息;其余(损益、往来、存货、税费、工资等)=经营。
+   */
+  _classifyCashFlow(a) {
+    const code = String(a.code);
+    if (/^(2001|2501|2502|2701|4001|4002|4101|2231|2232)/.test(code)) return 'financing';
+    if (/^(15|16|17|18)/.test(code)) return 'investing';
+    if (/^(1101|1131|1132|1521|1531)/.test(code)) return 'investing';
+    return 'operating';
+  }
+
+  cashFlowStatement(period) {
+    const cashIds = new Set(this.db.all('SELECT id FROM accounts WHERE ledger_id=? AND is_cash=1', [this.ledger.id]).map(a => a.id));
+    if (cashIds.size === 0) throw new Error('未设置现金/银行类科目');
+    const acctMap = {};
+    for (const a of this.db.all('SELECT * FROM accounts WHERE ledger_id=?', [this.ledger.id])) acctMap[a.id] = a;
+
+    const rows = this.db.all(
+      `SELECT v.id AS vid, v.voucher_no, v.voucher_date, e.account_id, e.debit, e.credit, e.summary
+       FROM voucher_entries e JOIN vouchers v ON e.voucher_id=v.id
+       WHERE v.ledger_id=? AND v.status='posted' AND v.period=?`,
+      [this.ledger.id, period]
+    );
+    const byVoucher = new Map();
+    for (const r of rows) {
+      if (!byVoucher.has(r.vid)) byVoucher.set(r.vid, []);
+      byVoucher.get(r.vid).push(r);
+    }
+    const cat = { operating: { in: 0n, out: 0n }, investing: { in: 0n, out: 0n }, financing: { in: 0n, out: 0n } };
+    const detail = [];
+    for (const entries of byVoucher.values()) {
+      for (const e of entries) {
+        if (!cashIds.has(e.account_id)) continue;
+        const d = M.toBigInt(e.debit), c = M.toBigInt(e.credit);
+        if (d === 0n && c === 0n) continue;
+        const isIn = d > 0n;
+        const amount = isIn ? d : c;
+        const counterpart = entries.find(x => !cashIds.has(x.account_id) && (isIn ? M.toBigInt(x.credit) > 0n : M.toBigInt(x.debit) > 0n));
+        const cls = counterpart ? this._classifyCashFlow(acctMap[counterpart.account_id]) : 'operating';
+        cat[cls][isIn ? 'in' : 'out'] += amount;
+        detail.push({ voucher_no: e.voucher_no, voucher_date: e.voucher_date, summary: e.summary, category: cls, direction: isIn ? 'in' : 'out', amount: dec(amount) });
+      }
+    }
+    const group = (g) => ({ inflow: dec(g.in), outflow: dec(g.out), net: dec(g.in - g.out) });
+    const operating = group(cat.operating);
+    const investing = group(cat.investing);
+    const financing = group(cat.financing);
+    const netIncrease = cat.operating.in - cat.operating.out + cat.investing.in - cat.investing.out + cat.financing.in - cat.financing.out;
+    return { period, operating, investing, financing, net_increase: dec(netIncrease), detail };
+  }
+
   // ================= 审计日志 =================
   listAuditLogs(limit = 500) {
     return this.db.all('SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?', [limit]);

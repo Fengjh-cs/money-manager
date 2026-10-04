@@ -161,6 +161,12 @@ async function main() {
   check('本年利润贷方 710', cfProfit && cfProfit.credit === 71000, JSON.stringify(cfProfit));
   assertThrows('重复结转被拒绝', () => svc.carryForwardProfit('2026-01'), '已生成结转损益凭证');
 
+  console.log('— 现金流量表(直接法) —');
+  const cfStmt = svc.cashFlowStatement('2026-01');
+  check('经营流入 710', cfStmt.operating.inflow === '710.00', cfStmt.operating.inflow);
+  check('筹资流入 1000', cfStmt.financing.inflow === '1000.00', cfStmt.financing.inflow);
+  check('现金净增加 1710', cfStmt.net_increase === '1710.00', cfStmt.net_increase);
+
   db.close();
   fs.rmSync(tmp, { recursive: true, force: true });
 

@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { openDatabase } = require('./src/db/database');
@@ -106,6 +106,7 @@ function registerIpc() {
     'report:incomeStatement': (period) => service.incomeStatement(period),
     'report:subsidiaryLedger': (o) => service.subsidiaryLedger(o.account_id, o.from, o.to),
     'report:generalLedger': (o) => service.generalLedger(o.account_id, o.from, o.to),
+    'report:cashFlow': (period) => service.cashFlowStatement(period),
 
     'audit:list': (limit) => service.listAuditLogs(limit || 500),
 
@@ -117,6 +118,28 @@ function registerIpc() {
     'period:unclose': (period) => service.unclosePeriod(period),
     'period:list': () => service.listPeriods(),
     'period:carryForward': (period) => service.carryForwardProfit(period),
+
+    // 导出 CSV(带 UTF-8 BOM,Excel 可直接打开中文)
+    'export:csv': async ({ filename, content }) => {
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        defaultPath: filename,
+        filters: [{ name: 'CSV 文件', extensions: ['csv'] }],
+      });
+      if (canceled || !filePath) return { canceled: true };
+      fs.writeFileSync(filePath, '﻿' + content, 'utf8');
+      return { saved: true, path: filePath };
+    },
+
+    // 打印:A4,弹出系统打印对话框
+    'print:html': async ({ html }) => {
+      const pw = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
+      await pw.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+      await new Promise((resolve) => {
+        pw.webContents.print({ silent: false }, () => resolve());
+      });
+      pw.destroy();
+      return { printed: true };
+    },
   };
 
   ipcMain.handle('api', (_event, method, payload) => {

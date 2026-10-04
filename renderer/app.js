@@ -11,6 +11,10 @@ const state = {
   nav: 'vouchers',
   voucherPeriod: currentPeriod(),
   voucherStatus: '',
+  lastTrial: null,
+  lastReports: null,
+  lastLedger: null,
+  lastGl: null,
 };
 
 function currentPeriod() {
@@ -36,6 +40,59 @@ function fmt(s) {
   let [i, f] = String(s).replace('-', '').split('.');
   i = i.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   return (neg ? '-' : '') + i + (f ? '.' + f : '');
+}
+
+/* ---------- 导出 CSV / 打印 ---------- */
+function csvCell(v) {
+  const s = v == null ? '' : String(v);
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+function buildCSV(headers, rows) {
+  return [headers, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');
+}
+async function exportCSV(defaultName, headers, rows) {
+  const content = buildCSV(headers, rows);
+  const res = await call('export:csv', { filename: defaultName, content });
+  if (res.canceled) return;
+  toast('已导出:' + res.path, 'ok');
+}
+function printHTML(html) {
+  return call('print:html', { html }).then(() => toast('已发送到打印机', 'ok')).catch(e => toast(e.message, 'err'));
+}
+function printTableHtml(title, subtitle, headers, rows) {
+  const head = headers.map(h => `<th>${esc(h)}</th>`).join('');
+  const body = rows.map(r => `<tr>${r.map(c => `<td class="num">${esc(c)}</td>`).join('')}</tr>`).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+  <style>body{font-family:'Microsoft YaHei',sans-serif;padding:24px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #000;padding:5px 8px}th{background:#f2f2f2}h1{font-size:18px;text-align:center;margin:0 0 4px}.sub{text-align:center;color:#555;font-size:12px;margin-bottom:14px}</style></head>
+  <body><h1>${esc(title)}</h1><div class="sub">${esc(subtitle || '')}</div><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></body></html>`;
+}
+function printVoucherHtml(v) {
+  const rows = v.entries.map(e => `<tr>
+    <td>${esc(e.summary)}</td><td>${esc(e.account_code)} ${esc(e.account_name)}</td>
+    <td class="num">${e.debit ? fmt(centsToStr(e.debit, e.currency_code)) : ''}</td>
+    <td class="num">${e.credit ? fmt(centsToStr(e.credit, e.currency_code)) : ''}</td></tr>`).join('');
+  const totD = v.entries.reduce((a, e) => a + (e.debit || 0), 0);
+  const totC = v.entries.reduce((a, e) => a + (e.credit || 0), 0);
+  return `<!doctype html><html><head><meta charset="utf-8"><title>记账凭证</title>
+  <style>body{font-family:'Microsoft YaHei',sans-serif;padding:30px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid #000;padding:7px 9px}th{background:#f2f2f2}.num{text-align:right}h1{text-align:center;font-size:20px;margin:0 0 14px}.meta{margin-bottom:14px;font-size:13px}.meta span{margin-right:18px}</style></head>
+  <body><h1>记账凭证</h1>
+  <div class="meta"><span>凭证号:${esc(v.voucher_no)}</span><span>日期:${esc(v.voucher_date)}</span><span>类型:${esc(v.voucher_type)}</span><span>附件:${v.attachment_count} 张</span></div>
+  <table><thead><tr><th>摘要</th><th>科目</th><th>借方金额</th><th>贷方金额</th></tr></thead><tbody>${rows}
+  <tr><th>合计</th><th></th><th class="num">${fmt(centsToStr(totD, baseCurrency()))}</th><th class="num">${fmt(centsToStr(totC, baseCurrency()))}</th></tr></tbody></table>
+  <div class="meta" style="margin-top:20px"><span>制单:${esc(v.maker)}</span><span>审核:${esc(v.reviewer || '')}</span></div></body></html>`;
+}
+function reportPrintHtml(period, bs, inc) {
+  const rowsHtml = (arr) => arr.map(x => `<tr><td>${esc(x.code)}</td><td>${esc(x.name)}</td><td class="num">${fmt(x.balance)}</td></tr>`).join('');
+  const incHtml = inc.rows.filter(r => r.net !== '0.00').map(x => `<tr><td>${esc(x.code)}</td><td>${esc(x.name)}</td><td class="num">${fmt(x.net)}</td></tr>`).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>财务报表</title>
+  <style>body{font-family:'Microsoft YaHei',sans-serif;padding:24px}table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px}th,td{border:1px solid #000;padding:5px 8px}th{background:#f2f2f2}.num{text-align:right}h1{font-size:18px;text-align:center}h2{font-size:14px;margin:16px 0 6px}.total{margin:4px 0 12px;font-weight:600}</style></head>
+  <body><h1>财务报表(${esc(period)})</h1>
+  <h2>资产负债表 — 资产</h2><table><thead><tr><th>科目</th><th>名称</th><th>余额</th></tr></thead><tbody>${rowsHtml(bs.assets)}</tbody></table><div class="total">资产合计:${fmt(bs.asset_total)}</div>
+  <h2>资产负债表 — 负债</h2><table><thead><tr><th>科目</th><th>名称</th><th>余额</th></tr></thead><tbody>${rowsHtml(bs.liabilities)}</tbody></table><div class="total">负债合计:${fmt(bs.liability_total)}</div>
+  <h2>资产负债表 — 所有者权益</h2><table><thead><tr><th>科目</th><th>名称</th><th>余额</th></tr></thead><tbody>${rowsHtml(bs.equities)}</tbody></table><div class="total">权益合计:${fmt(bs.equity_total)}(其中本年利润 ${fmt(bs.retained_profit)})</div>
+  <h2>利润表</h2><table><thead><tr><th>科目</th><th>名称</th><th>金额</th></tr></thead><tbody>${incHtml}</tbody></table><div class="total">收入 ${fmt(inc.revenue)} - 费用 ${fmt(inc.expense)} = 净利润 ${fmt(inc.profit)}</div>
+  </body></html>`;
 }
 
 function precisionOf(code) {
@@ -131,6 +188,7 @@ const NAV = [
   { key: 'ledger', label: '明细账' },
   { key: 'gl', label: '总账' },
   { key: 'reports', label: '财务报表' },
+  { key: 'cashflow', label: '现金流量表' },
   { key: 'closing', label: '期末处理' },
   { key: 'opening', label: '期初余额' },
   { key: 'rates', label: '汇率设置' },
@@ -164,6 +222,7 @@ function viewHtml(key) {
     case 'ledger': return ledgerHtml();
     case 'gl': return glHtml();
     case 'reports': return reportsHtml();
+    case 'cashflow': return cashflowHtml();
     case 'closing': return closingHtml();
     case 'opening': return openingHtml();
     case 'rates': return ratesHtml();
@@ -285,6 +344,7 @@ function renderVoucherEditor(voucher) {
         <h2>${title}</h2>
         ${head}
         <div class="actions">
+          ${v ? `<button data-action="voucher:print" data-id="${esc(v.id)}">打印</button>` : ''}
           ${canEdit ? `<button class="primary" data-action="voucher:save">保存</button>` : ''}
           <button data-action="modal:close">${readOnly ? '关闭' : '取消'}</button>
         </div>
@@ -368,7 +428,9 @@ function trialHtml() {
     <div class="page-head"><h1>试算平衡表</h1></div>
     <div class="panel">
       <div class="toolbar"><label>期间</label><input id="tb-period" type="month" value="${state.voucherPeriod || currentPeriod()}">
-      <button class="primary" data-action="trial:load">查询</button></div>
+      <button class="primary" data-action="trial:load">查询</button>
+      <button data-action="trial:export">导出 CSV</button>
+      <button data-action="trial:print">打印</button></div>
       <div id="trial-table"></div>
     </div>`;
 }
@@ -376,6 +438,7 @@ function trialHtml() {
 async function loadTrial() {
   const period = document.getElementById('tb-period').value || currentPeriod();
   const tb = await call('report:trialBalance', period);
+  state.lastTrial = { period, tb };
   const rows = tb.rows.filter(r => r.ending_debit !== '0.00' || r.ending_credit !== '0.00' || r.period_debit !== '0.00' || r.period_credit !== '0.00')
     .map(r => `<tr>
       <td>${esc(r.code)}</td><td>${esc(r.name)}</td>
@@ -406,6 +469,7 @@ function ledgerHtml() {
         <label>从</label><input id="sl-from" type="month" value="${state.voucherPeriod || currentPeriod()}" style="width:150px">
         <label>到</label><input id="sl-to" type="month" value="${state.voucherPeriod || currentPeriod()}" style="width:150px">
         <button class="primary" data-action="ledger:load">查询</button>
+        <button data-action="ledger:export">导出 CSV</button>
       </div>
       <div id="sl-result"></div>
     </div>`;
@@ -416,6 +480,7 @@ async function loadLedger() {
   const from = document.getElementById('sl-from').value;
   const to = document.getElementById('sl-to').value;
   const res = await call('report:subsidiaryLedger', { account_id: account, from, to });
+  state.lastLedger = { account, from, to, res };
   const lines = res.lines.map(l => {
     const bal = l.balance_debit !== '0.00' ? '借 ' + fmt(l.balance_debit)
       : (l.balance_credit !== '0.00' ? '贷 ' + fmt(l.balance_credit) : '平');
@@ -440,6 +505,7 @@ function glHtml() {
         <label>从</label><input id="gl-from" type="month" value="${state.voucherPeriod || currentPeriod()}" style="width:150px">
         <label>到</label><input id="gl-to" type="month" value="${state.voucherPeriod || currentPeriod()}" style="width:150px">
         <button class="primary" data-action="gl:load">查询</button>
+        <button data-action="gl:export">导出 CSV</button>
       </div>
       <div id="gl-result"></div>
     </div>`;
@@ -450,6 +516,7 @@ async function loadGl() {
   const from = document.getElementById('gl-from').value;
   const to = document.getElementById('gl-to').value;
   const res = await call('report:generalLedger', { account_id: account, from, to });
+  state.lastGl = { account, from, to, res };
   const months = res.months.map(m => `<tr><td>${esc(m.period)}</td><td class="num">${fmt(m.debit)}</td><td class="num">${fmt(m.credit)}</td></tr>`).join('');
   document.getElementById('gl-result').innerHTML = `
     <div style="margin:8px 0">科目:${esc(res.account.code)} ${esc(res.account.name)}</div>
@@ -487,7 +554,8 @@ function reportsHtml() {
     <div class="page-head"><h1>财务报表</h1></div>
     <div class="panel">
       <div class="toolbar"><label>期间</label><input id="rp-period" type="month" value="${state.voucherPeriod || currentPeriod()}">
-      <button class="primary" data-action="reports:load">查询</button></div>
+      <button class="primary" data-action="reports:load">查询</button>
+      <button data-action="reports:print">打印</button></div>
       <div id="reports-body"></div>
     </div>`;
 }
@@ -496,6 +564,7 @@ async function loadReports() {
   const period = document.getElementById('rp-period').value || currentPeriod();
   const bs = await call('report:balanceSheet', period);
   const inc = await call('report:incomeStatement', period);
+  state.lastReports = { period, bs, inc };
   const bsRows = (arr) => arr.map(x => `<tr><td>${esc(x.code)}</td><td>${esc(x.name)}</td><td class="num">${fmt(x.balance)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">无</td></tr>';
   document.getElementById('reports-body').innerHTML = `
     <div class="asset-grid">
@@ -522,6 +591,34 @@ async function loadReports() {
         </tbody></table>
       </div>
     </div>`;
+}
+
+/* ---------- 现金流量表 ---------- */
+function cashflowHtml() {
+  return `
+    <div class="page-head"><h1>现金流量表</h1></div>
+    <div class="panel">
+      <div class="toolbar"><label>期间</label><input id="cf-period" type="month" value="${state.voucherPeriod || currentPeriod()}">
+      <button class="primary" data-action="cashflow:load">查询</button></div>
+      <div id="cf-result"></div>
+      <p class="hint" style="margin-top:12px">简化直接法:按涉及现金/银行科目的收付分类为经营/投资/筹资活动。</p>
+    </div>`;
+}
+
+async function loadCashflow() {
+  const period = document.getElementById('cf-period').value || currentPeriod();
+  const cf = await call('report:cashFlow', period);
+  const groupRow = (label, g) => `
+    <tr><td>${label}流入</td><td class="num">${fmt(g.inflow)}</td><td class="num"></td></tr>
+    <tr><td>${label}流出</td><td class="num"></td><td class="num">${fmt(g.outflow)}</td></tr>
+    <tr class="totals"><td>${label}净额</td><td colspan="2" class="num">${fmt(g.net)}</td></tr>`;
+  document.getElementById('cf-result').innerHTML = `
+    <table class="grid"><thead><tr><th>项目</th><th>流入</th><th>流出</th></tr></thead><tbody>
+    ${groupRow('经营活动', cf.operating)}
+    ${groupRow('投资活动', cf.investing)}
+    ${groupRow('筹资活动', cf.financing)}
+    <tr class="totals"><td>现金及现金等价物净增加额</td><td colspan="2" class="num">${fmt(cf.net_increase)}</td></tr>
+    </tbody></table>`;
 }
 
 /* ---------- 期初余额 ---------- */
@@ -676,6 +773,11 @@ async function handleAction(action, id, arg) {
       renderVoucherEditor(v);
       break;
     }
+    case 'voucher:print': {
+      const v = await call('voucher:get', id);
+      await printHTML(printVoucherHtml(v));
+      break;
+    }
     case 'voucher:review': await mut(() => call('voucher:review', id)); break;
     case 'voucher:unreview': await mut(() => call('voucher:unreview', id)); break;
     case 'voucher:post': await mut(() => call('voucher:post', id)); break;
@@ -728,9 +830,50 @@ async function handleAction(action, id, arg) {
       break;
     }
     case 'trial:load': loadTrial(); break;
+    case 'trial:export': {
+      const d = state.lastTrial;
+      if (!d) { toast('请先查询', 'err'); break; }
+      const headers = ['科目编码', '科目名称', '期初借方', '期初贷方', '本期借方', '本期贷方', '期末借方', '期末贷方'];
+      const rows = d.tb.rows.map(r => [r.code, r.name, r.opening_debit, r.opening_credit, r.period_debit, r.period_credit, r.ending_debit, r.ending_credit]);
+      rows.push(['合计', '', d.tb.total.opening_debit, d.tb.total.opening_credit, d.tb.total.period_debit, d.tb.total.period_credit, d.tb.total.ending_debit, d.tb.total.ending_credit]);
+      await exportCSV(`试算平衡表-${d.period}.csv`, headers, rows);
+      break;
+    }
+    case 'trial:print': {
+      const d = state.lastTrial;
+      if (!d) { toast('请先查询', 'err'); break; }
+      const headers = ['科目编码', '科目名称', '期初借方', '期初贷方', '本期借方', '本期贷方', '期末借方', '期末贷方'];
+      const rows = d.tb.rows.map(r => [r.code, r.name, r.opening_debit, r.opening_credit, r.period_debit, r.period_credit, r.ending_debit, r.ending_credit]);
+      rows.push(['合计', '', d.tb.total.opening_debit, d.tb.total.opening_credit, d.tb.total.period_debit, d.tb.total.period_credit, d.tb.total.ending_debit, d.tb.total.ending_credit]);
+      await printHTML(printTableHtml('试算平衡表', d.period, headers, rows));
+      break;
+    }
     case 'ledger:load': loadLedger(); break;
+    case 'ledger:export': {
+      const d = state.lastLedger;
+      if (!d) { toast('请先查询', 'err'); break; }
+      const headers = ['日期', '凭证号', '摘要', '借方', '贷方', '余额'];
+      const rows = d.res.lines.map(l => [l.voucher_date, l.voucher_no, l.summary, l.debit, l.credit, (l.balance_debit !== '0.00' ? '借 ' + l.balance_debit : (l.balance_credit !== '0.00' ? '贷 ' + l.balance_credit : '0.00'))]);
+      await exportCSV(`明细账-${d.res.account.code}-${d.from}至${d.to}.csv`, headers, rows);
+      break;
+    }
     case 'gl:load': loadGl(); break;
+    case 'gl:export': {
+      const d = state.lastGl;
+      if (!d) { toast('请先查询', 'err'); break; }
+      const headers = ['期间', '借方合计', '贷方合计'];
+      const rows = d.res.months.map(m => [m.period, m.debit, m.credit]);
+      await exportCSV(`总账-${d.res.account.code}-${d.from}至${d.to}.csv`, headers, rows);
+      break;
+    }
     case 'reports:load': loadReports(); break;
+    case 'cashflow:load': loadCashflow(); break;
+    case 'reports:print': {
+      const d = state.lastReports;
+      if (!d) { toast('请先查询', 'err'); break; }
+      await printHTML(reportPrintHtml(d.period, d.bs, d.inc));
+      break;
+    }
     case 'closing:carryForward': {
       const period = document.getElementById('cl-period').value;
       if (!confirm(`确定对期间 ${period} 执行「结转损益」吗?系统将生成一张结转凭证(草稿)。`)) break;
@@ -819,6 +962,7 @@ async function afterView(key) {
       case 'ledger': await loadLedger(); break;
       case 'gl': await loadGl(); break;
       case 'reports': await loadReports(); break;
+      case 'cashflow': await loadCashflow(); break;
       case 'closing': await loadClosing(); break;
       case 'opening': await loadOpening(); break;
       case 'rates': await loadRates(); break;
