@@ -239,6 +239,19 @@ async function main() {
   ]);
   check('导入成功 2 条、报错 1 条', imp.imported === 2 && imp.errors.length === 1, JSON.stringify(imp));
 
+  console.log('— 自动备份 —');
+  const snapBefore = svc.listSnapshots().length;
+  svc.createAutoSnapshot('auto-daily', '每日自动备份');
+  check('自动快照已生成', svc.listSnapshots().length === snapBefore + 1);
+  check('lastSnapshotTime 有值', !!svc.lastSnapshotTime());
+  check('结账前自动备份已存在', svc.listSnapshots().some(s => s.trigger === 'auto-before-close'));
+
+  console.log('— 期末调汇 —');
+  svc.setExchangeRate('USD', '2026-01', '7.50');
+  const reval = svc.revaluation('2026-01');
+  check('生成调汇凭证', reval.generated === true);
+  check('汇兑收益 40', reval.net === '40.00', reval.net);
+
   db.close();
   fs.rmSync(tmp, { recursive: true, force: true });
 

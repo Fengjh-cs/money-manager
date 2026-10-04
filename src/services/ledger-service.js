@@ -864,8 +864,7 @@ class LedgerService {
   }
 
   // ================= 快照 / 回滚 =================
-  createSnapshot(trigger, description) {
-    this._requireAccountant();
+  _snapshot(trigger, description, withAudit) {
     fs.mkdirSync(this.snapDir, { recursive: true });
     const id = 'S' + Date.now().toString(36) + crypto.randomBytes(2).toString('hex');
     const fname = `${trigger}-${now().replace(/[:.]/g, '-')}-${id}.db`;
@@ -877,9 +876,27 @@ class LedgerService {
       'INSERT INTO snapshots (id, ledger_id, created_at, trigger, description, file_path, note) VALUES (?,?,?,?,?,?,?)',
       [snap.id, snap.ledger_id, snap.created_at, snap.trigger, snap.description, snap.file_path, snap.note]
     );
-    this._audit('创建快照', 'snapshot', id, null, { trigger, description, file_path: fp });
+    if (withAudit) this._audit('创建快照', 'snapshot', id, null, { trigger, description, file_path: fp });
     this.db.save();
     return snap;
+  }
+
+  createSnapshot(trigger, description) {
+    this._requireAccountant();
+    return this._snapshot(trigger, description, true);
+  }
+
+  /** 系统自动备份(不要求当前用户;无账套时跳过) */
+  createAutoSnapshot(trigger, description) {
+    if (!this.ledger) return null;
+    return this._snapshot(trigger, description, false);
+  }
+
+  /** 最近一次快照时间(无则 null) */
+  lastSnapshotTime() {
+    if (!this.ledger) return null;
+    const s = this.db.get('SELECT created_at FROM snapshots WHERE ledger_id=? ORDER BY created_at DESC LIMIT 1', [this.ledger.id]);
+    return s ? s.created_at : null;
   }
 
   listSnapshots() {
@@ -951,8 +968,64 @@ class LedgerService {
     return voucher;
   }
 
+  /**
+   * 期末调汇:按期间期末汇率,调整外币核算科目的本币余额,差额计入汇兑损益。
+   * 简化说明:外币余额取自已记账分录(不含期初外币余额);汇兑损益科目优先用名称含「汇兑损益」者,否则用「财务费用」。
+   */
+  revaluation(period) {
+    this._requireAccountant();
+    this._requirePeriodOpen(period);
+    const fxAcct = this.db.get("SELECT * FROM accounts WHERE ledger_id=? AND name LIKE '%汇兑损益%'", [this.ledger.id]);
+    const counterpart = fxAcct || this.db.get("SELECT * FROM accounts WHERE ledger_id=? AND code='6603'", [this.ledger.id]);
+    if (!counterpart) throw new Error('未找到「财务费用/汇兑损益」科目');
+
+    const entries = this.db.all(
+      `SELECT e.account_id, e.currency_code, e.debit_foreign, e.credit_foreign, e.debit, e.credit
+       FROM voucher_entries e JOIN vouchers v ON e.voucher_id=v.id
+       WHERE v.ledger_id=? AND v.status='posted' AND v.period<=?`,
+      [this.ledger.id, period]
+    );
+    const balances = new Map(); // key = account_id:currency → { foreign, base }
+    for (const e of entries) {
+      if (!e.currency_code || e.currency_code === this.ledger.base_currency) continue;
+      const key = `${e.account_id}:${e.currency_code}`;
+      const b = balances.get(key) || { foreign: 0n, base: 0n };
+      b.foreign += M.toBigInt(e.debit_foreign || 0) - M.toBigInt(e.credit_foreign || 0);
+      b.base += M.toBigInt(e.debit || 0) - M.toBigInt(e.credit || 0);
+      balances.set(key, b);
+    }
+
+    const adjustments = [];
+    for (const [key, b] of balances) {
+      if (b.foreign === 0n) continue;
+      const currencyCode = key.split(':')[1];
+      const rate = this.db.get('SELECT rate_scaled FROM exchange_rates WHERE ledger_id=? AND currency_code=? AND period=?', [this.ledger.id, currencyCode, period]);
+      if (!rate) continue; // 无该期间期末汇率,跳过
+      const adjusted = M.convertForeignToBase(b.foreign, M.toBigInt(rate.rate_scaled));
+      const diff = adjusted - b.base;
+      if (diff === 0n) continue;
+      adjustments.push({ account_id: key.split(':')[0], currency_code: currencyCode, diff });
+    }
+    if (adjustments.length === 0) return { generated: false, message: '无需调汇(外币余额为 0 或未设置期间汇率)' };
+
+    const lines = [];
+    for (const adj of adjustments) {
+      if (adj.diff > 0n) lines.push({ summary: `期末调汇:${adj.currency_code}`, account_id: adj.account_id, debit: M.formatAmount(adj.diff).replace(/,/g, '') });
+      else lines.push({ summary: `期末调汇:${adj.currency_code}`, account_id: adj.account_id, credit: M.formatAmount(-adj.diff).replace(/,/g, '') });
+    }
+    const net = adjustments.reduce((a, x) => a + x.diff, 0n);
+    if (net > 0n) lines.push({ summary: '期末汇兑损益', account_id: counterpart.id, credit: M.formatAmount(net).replace(/,/g, '') });
+    else if (net < 0n) lines.push({ summary: '期末汇兑损益', account_id: counterpart.id, debit: M.formatAmount(-net).replace(/,/g, '') });
+
+    const voucher = this.createVoucher({ voucher_date: lastDayOfPeriod(period), voucher_type: '记', entries: lines, source: 'revaluation' });
+    this._audit('期末调汇', 'period', period, null, { voucher_no: voucher.voucher_no, net: M.formatAmount(net).replace(/,/g, '') });
+    this.db.save();
+    return { generated: true, voucher, net: M.formatAmount(net).replace(/,/g, '') };
+  }
+
   closePeriod(period) {
     this._requireAccountant();
+    this.createSnapshot('auto-before-close', `结账前自动备份(期间 ${period})`);
     this.db.run(
       'INSERT OR REPLACE INTO periods (ledger_id, period, status) VALUES (?,?,?)',
       [this.ledger.id, period, 'closed']

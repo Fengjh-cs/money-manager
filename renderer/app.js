@@ -62,12 +62,15 @@ async function exportCSV(defaultName, headers, rows) {
 function printHTML(html) {
   return call('print:html', { html }).then(() => toast('已发送到打印机', 'ok')).catch(e => toast(e.message, 'err'));
 }
+function companyName() {
+  return state.ledger ? (state.ledger.company_name || state.ledger.name || '') : '';
+}
 function printTableHtml(title, subtitle, headers, rows) {
   const head = headers.map(h => `<th>${esc(h)}</th>`).join('');
   const body = rows.map(r => `<tr>${r.map(c => `<td class="num">${esc(c)}</td>`).join('')}</tr>`).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
-  <style>body{font-family:'Microsoft YaHei',sans-serif;padding:24px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #000;padding:5px 8px}th{background:#f2f2f2}h1{font-size:18px;text-align:center;margin:0 0 4px}.sub{text-align:center;color:#555;font-size:12px;margin-bottom:14px}</style></head>
-  <body><h1>${esc(title)}</h1><div class="sub">${esc(subtitle || '')}</div><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></body></html>`;
+  <style>body{font-family:'Microsoft YaHei',sans-serif;padding:24px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #000;padding:5px 8px}th{background:#f2f2f2}.company{text-align:center;font-size:20px;font-weight:700;margin-bottom:2px}h1{font-size:16px;text-align:center;margin:0 0 4px}.sub{text-align:center;color:#555;font-size:12px;margin-bottom:14px}</style></head>
+  <body><div class="company">${esc(companyName())}</div><h1>${esc(title)}</h1><div class="sub">${esc(subtitle || '')}</div><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></body></html>`;
 }
 function printVoucherHtml(v) {
   const rows = v.entries.map(e => `<tr>
@@ -77,8 +80,8 @@ function printVoucherHtml(v) {
   const totD = v.entries.reduce((a, e) => a + (e.debit || 0), 0);
   const totC = v.entries.reduce((a, e) => a + (e.credit || 0), 0);
   return `<!doctype html><html><head><meta charset="utf-8"><title>记账凭证</title>
-  <style>body{font-family:'Microsoft YaHei',sans-serif;padding:30px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid #000;padding:7px 9px}th{background:#f2f2f2}.num{text-align:right}h1{text-align:center;font-size:20px;margin:0 0 14px}.meta{margin-bottom:14px;font-size:13px}.meta span{margin-right:18px}</style></head>
-  <body><h1>记账凭证</h1>
+  <style>body{font-family:'Microsoft YaHei',sans-serif;padding:30px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid #000;padding:7px 9px}th{background:#f2f2f2}.num{text-align:right}.company{text-align:center;font-size:20px;font-weight:700;margin-bottom:2px}h1{text-align:center;font-size:16px;margin:0 0 14px}.meta{margin-bottom:14px;font-size:13px}.meta span{margin-right:18px}</style></head>
+  <body><div class="company">${esc(companyName())}</div><h1>记账凭证</h1>
   <div class="meta"><span>凭证号:${esc(v.voucher_no)}</span><span>日期:${esc(v.voucher_date)}</span><span>类型:${esc(v.voucher_type)}</span><span>附件:${v.attachment_count} 张</span></div>
   <table><thead><tr><th>摘要</th><th>科目</th><th>借方金额</th><th>贷方金额</th></tr></thead><tbody>${rows}
   <tr><th>合计</th><th></th><th class="num">${fmt(centsToStr(totD, baseCurrency()))}</th><th class="num">${fmt(centsToStr(totC, baseCurrency()))}</th></tr></tbody></table>
@@ -88,8 +91,8 @@ function reportPrintHtml(period, bs, inc) {
   const rowsHtml = (arr) => arr.map(x => `<tr><td>${esc(x.code)}</td><td>${esc(x.name)}</td><td class="num">${fmt(x.balance)}</td></tr>`).join('');
   const incHtml = inc.rows.filter(r => r.net !== '0.00').map(x => `<tr><td>${esc(x.code)}</td><td>${esc(x.name)}</td><td class="num">${fmt(x.net)}</td></tr>`).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><title>财务报表</title>
-  <style>body{font-family:'Microsoft YaHei',sans-serif;padding:24px}table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px}th,td{border:1px solid #000;padding:5px 8px}th{background:#f2f2f2}.num{text-align:right}h1{font-size:18px;text-align:center}h2{font-size:14px;margin:16px 0 6px}.total{margin:4px 0 12px;font-weight:600}</style></head>
-  <body><h1>财务报表(${esc(period)})</h1>
+  <style>body{font-family:'Microsoft YaHei',sans-serif;padding:24px}table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px}th,td{border:1px solid #000;padding:5px 8px}th{background:#f2f2f2}.num{text-align:right}.company{text-align:center;font-size:20px;font-weight:700;margin-bottom:2px}h1{font-size:16px;text-align:center}h2{font-size:14px;margin:16px 0 6px}.total{margin:4px 0 12px;font-weight:600}</style></head>
+  <body><div class="company">${esc(companyName())}</div><h1>财务报表(${esc(period)})</h1>
   <h2>资产负债表 — 资产</h2><table><thead><tr><th>科目</th><th>名称</th><th>余额</th></tr></thead><tbody>${rowsHtml(bs.assets)}</tbody></table><div class="total">资产合计:${fmt(bs.asset_total)}</div>
   <h2>资产负债表 — 负债</h2><table><thead><tr><th>科目</th><th>名称</th><th>余额</th></tr></thead><tbody>${rowsHtml(bs.liabilities)}</tbody></table><div class="total">负债合计:${fmt(bs.liability_total)}</div>
   <h2>资产负债表 — 所有者权益</h2><table><thead><tr><th>科目</th><th>名称</th><th>余额</th></tr></thead><tbody>${rowsHtml(bs.equities)}</tbody></table><div class="total">权益合计:${fmt(bs.equity_total)}(其中本年利润 ${fmt(bs.retained_profit)})</div>
@@ -334,11 +337,11 @@ function auxOptions(selected) {
   return `<option value="">(无)</option>` + (state.auxItems || []).map(a => `<option value="${esc(a.id)}" ${a.id === selected ? 'selected' : ''}>${AUX_LABELS[a.type] || a.type}:${esc(a.name)}</option>`).join('');
 }
 
-function renderVoucherEditor(voucher) {
+function renderVoucherEditor(voucher, forceReadOnly = false) {
   editingId = voucher ? voucher.id : null;
   const isEdit = !!voucher;
   const v = voucher;
-  const readOnly = isEdit && v.status !== 'draft';
+  const readOnly = forceReadOnly || (isEdit && v.status !== 'draft');
   const canEdit = isAccountant() && !readOnly;
 
   const defaultDate = v ? v.voucher_date : todayStr();
@@ -569,11 +572,12 @@ function closingHtml() {
       <div class="toolbar">
         <label>期间</label><input id="cl-period" type="month" value="${state.voucherPeriod || currentPeriod()}" style="width:150px">
         ${isAccountant() ? `
+        <button data-action="closing:revaluation">期末调汇</button>
         <button class="primary" data-action="closing:carryForward">结转损益</button>
         <button class="primary" data-action="closing:close">结账</button>
         <button data-action="closing:unclose">反结账</button>` : '<span class="hint">审计角色为只读</span>'}
       </div>
-      <p class="hint">期末流程:①「结转损益」生成结转凭证(草稿),请到「凭证管理」审核并记账 → ②「结账」锁定该期间。结账后该期间不能再修改。</p>
+      <p class="hint">期末流程:①(可选)「期末调汇」按期末汇率调整外币本币余额 → ②「结转损益」→ ③审核记账后「结账」。生成的都是草稿凭证,需在「凭证管理」审核并记账。</p>
       <div id="cl-list"></div>
     </div>`;
 }
@@ -1031,7 +1035,7 @@ async function handleAction(action, id, arg) {
     case 'voucher:new': renderVoucherEditor(null); break;
     case 'voucher:view': {
       const v = await call('voucher:get', id);
-      renderVoucherEditor(v);
+      renderVoucherEditor(v, true);
       break;
     }
     case 'voucher:edit': {
@@ -1155,6 +1159,16 @@ async function handleAction(action, id, arg) {
       const d = state.lastReports;
       if (!d) { toast('请先查询', 'err'); break; }
       await printHTML(reportPrintHtml(d.period, d.bs, d.inc));
+      break;
+    }
+    case 'closing:revaluation': {
+      const period = document.getElementById('cl-period').value;
+      if (!confirm(`确定对期间 ${period} 执行期末调汇吗?将按该期间汇率调整外币科目本币余额并生成调汇凭证(草稿)。`)) break;
+      try {
+        const res = await call('period:revaluation', period);
+        if (res.generated) toast(`已生成调汇凭证 ${res.voucher.voucher_no}(汇兑损益 ${res.net})`, 'ok');
+        else toast(res.message, 'ok');
+      } catch (e) { toast(e.message, 'err'); }
       break;
     }
     case 'closing:carryForward': {

@@ -73,6 +73,20 @@ function fullInit() {
   };
 }
 
+/** 启动时自动备份:若距上次备份超过 24 小时则自动快照一次 */
+function maybeAutoBackup() {
+  try {
+    if (!service || !service.hasLedger()) return;
+    const last = service.lastSnapshotTime();
+    const DAY = 24 * 3600 * 1000;
+    if (!last || (Date.now() - new Date(last).getTime()) > DAY) {
+      service.createAutoSnapshot('auto-daily', '每日自动备份');
+    }
+  } catch (e) {
+    console.log('[auto-backup] 跳过:', e.message);
+  }
+}
+
 /**
  * IPC 白名单:渲染进程只能调用这里显式列出的方法。
  * 统一返回 { ok, data } 或 { ok:false, error },便于界面直接展示错误。
@@ -98,6 +112,7 @@ function registerIpc() {
       }
       service = new LedgerService(db, dataDir);
       cryptoInfo = { salt, key };
+      maybeAutoBackup();
       return fullInit();
     },
 
@@ -199,6 +214,7 @@ function registerIpc() {
     'period:unclose': (period) => service.unclosePeriod(period),
     'period:list': () => service.listPeriods(),
     'period:carryForward': (period) => service.carryForwardProfit(period),
+    'period:revaluation': (period) => service.revaluation(period),
 
     // 导出 CSV(带 UTF-8 BOM,Excel 可直接打开中文)
     'export:csv': async ({ filename, content }) => {
@@ -276,6 +292,7 @@ app.whenReady().then(async () => {
     service = new LedgerService(db, dataDir);
   }
 
+  maybeAutoBackup();
   registerIpc();
   createWindow();
 
