@@ -139,10 +139,10 @@ function registerIpc() {
 
     // 打印:A4,弹出系统打印对话框
     'print:html': async ({ html }) => {
-      const pw = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
+      const pw = new BrowserWindow({ show: true, width: 720, height: 900, autoHideMenuBar: true, webPreferences: { sandbox: true } });
       await pw.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
       await new Promise((resolve) => {
-        pw.webContents.print({ silent: false }, () => resolve());
+        pw.webContents.print({ silent: false, printBackground: true }, () => resolve());
       });
       pw.destroy();
       return { printed: true };

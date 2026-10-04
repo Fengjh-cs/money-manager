@@ -291,6 +291,7 @@ async function loadVoucherList() {
 
 function voucherActionBtns(v) {
   let b = `<button class="link" data-action="voucher:view" data-id="${esc(v.id)}">查看</button>`;
+  b += `<button class="link" data-action="voucher:print" data-id="${esc(v.id)}">打印</button>`;
   if (!isAccountant()) return b;
   const a = (action, label) => `<button class="link" data-action="${action}" data-id="${esc(v.id)}">${label}</button>`;
   switch (v.status) {
@@ -486,6 +487,7 @@ function ledgerHtml() {
         <label>到</label><input id="sl-to" type="month" value="${state.voucherPeriod || currentPeriod()}" style="width:150px">
         <button class="primary" data-action="ledger:load">查询</button>
         <button data-action="ledger:export">导出 CSV</button>
+        <button data-action="ledger:print">打印</button>
       </div>
       <div id="sl-result"></div>
     </div>`;
@@ -522,6 +524,7 @@ function glHtml() {
         <label>到</label><input id="gl-to" type="month" value="${state.voucherPeriod || currentPeriod()}" style="width:150px">
         <button class="primary" data-action="gl:load">查询</button>
         <button data-action="gl:export">导出 CSV</button>
+        <button data-action="gl:print">打印</button>
       </div>
       <div id="gl-result"></div>
     </div>`;
@@ -1042,6 +1045,14 @@ async function handleAction(action, id, arg) {
       await exportCSV(`明细账-${d.res.account.code}-${d.from}至${d.to}.csv`, headers, rows);
       break;
     }
+    case 'ledger:print': {
+      const d = state.lastLedger;
+      if (!d) { toast('请先查询', 'err'); break; }
+      const headers = ['日期', '凭证号', '摘要', '借方', '贷方', '余额'];
+      const rows = d.res.lines.map(l => [l.voucher_date, l.voucher_no, l.summary, l.debit, l.credit, (l.balance_debit !== '0.00' ? '借 ' + l.balance_debit : (l.balance_credit !== '0.00' ? '贷 ' + l.balance_credit : '0.00'))]);
+      await printHTML(printTableHtml(`明细账 - ${d.res.account.code} ${d.res.account.name}`, `${d.from} 至 ${d.to}`, headers, rows));
+      break;
+    }
     case 'gl:load': loadGl(); break;
     case 'gl:export': {
       const d = state.lastGl;
@@ -1049,6 +1060,14 @@ async function handleAction(action, id, arg) {
       const headers = ['期间', '借方合计', '贷方合计'];
       const rows = d.res.months.map(m => [m.period, m.debit, m.credit]);
       await exportCSV(`总账-${d.res.account.code}-${d.from}至${d.to}.csv`, headers, rows);
+      break;
+    }
+    case 'gl:print': {
+      const d = state.lastGl;
+      if (!d) { toast('请先查询', 'err'); break; }
+      const headers = ['期间', '借方合计', '贷方合计'];
+      const rows = d.res.months.map(m => [m.period, m.debit, m.credit]);
+      await printHTML(printTableHtml(`总账 - ${d.res.account.code} ${d.res.account.name}`, `${d.from} 至 ${d.to}`, headers, rows));
       break;
     }
     case 'reports:load': loadReports(); break;
