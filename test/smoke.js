@@ -267,6 +267,10 @@ async function main() {
   ]);
   check('导入成功 1 张、失败 2 张', vImport.imported === 1 && vImport.errors.length === 2, JSON.stringify(vImport));
 
+  console.log('— 系统设置 —');
+  svc.setSetting('test_key', 'test_value');
+  check('设置读写', svc.getSetting('test_key') === 'test_value');
+
   console.log('— 现金流量表(间接法) —');
   const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-cf-'));
   const db2 = await openDatabase(path.join(tmp2, 'l.db'));

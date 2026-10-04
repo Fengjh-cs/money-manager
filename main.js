@@ -137,6 +137,9 @@ function registerIpc() {
     'ledger:list': () => service.listLedgers(),
     'ledger:switch': (id) => service.switchLedger(id),
 
+    'setting:get': (key) => service.getSetting(key),
+    'setting:set': ({ key, value }) => service.setSetting(key, value),
+
     'account:list': () => service.listAccounts(),
     'account:add': (opts) => service.addAccount(opts),
 

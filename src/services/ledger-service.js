@@ -167,6 +167,17 @@ class LedgerService {
 
   listStandards() { return Object.values(STANDARDS); }
 
+  getSetting(key) {
+    const row = this.db.get('SELECT value FROM settings WHERE key=?', [key]);
+    return row ? row.value : null;
+  }
+
+  setSetting(key, value) {
+    this.db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)', [key, String(value)]);
+    this.db.save();
+    return { key, value: String(value) };
+  }
+
   listLedgers() {
     return this.db.all('SELECT id, name, company_name, accounting_standard, base_currency, created_at FROM ledgers ORDER BY created_at');
   }

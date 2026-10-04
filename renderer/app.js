@@ -65,6 +65,38 @@ function printHTML(html) {
 function companyName() {
   return state.ledger ? (state.ledger.company_name || state.ledger.name || '') : '';
 }
+// 套打:把数据按绝对坐标打印到预先印好表格的凭证纸上(ox/oy 为毫米偏移)
+function printVoucherSlipHtml(v, ox, oy) {
+  const seq = String(v.voucher_no).split('-').pop();
+  const lines = v.entries.map((e, i) => {
+    const top = 30 + i * 15;
+    const debit = e.debit ? fmt(centsToStr(e.debit, e.currency_code)) : '';
+    const credit = e.credit ? fmt(centsToStr(e.credit, e.currency_code)) : '';
+    return `
+      <div class="f" style="left:12mm;top:${top}mm;width:48mm">${esc(e.summary)}</div>
+      <div class="f" style="left:60mm;top:${top}mm;width:58mm">${esc(e.account_code)} ${esc(e.account_name)}</div>
+      <div class="f num" style="left:118mm;top:${top}mm;width:38mm">${debit}</div>
+      <div class="f num" style="left:156mm;top:${top}mm;width:38mm">${credit}</div>`;
+  }).join('');
+  const totD = v.entries.reduce((a, e) => a + (e.debit || 0), 0);
+  const totC = v.entries.reduce((a, e) => a + (e.credit || 0), 0);
+  return `<!doctype html><html><head><meta charset="utf-8"><title>记账凭证-套打</title>
+  <style>@page{size:210mm 140mm;margin:0}body{margin:0;font-family:'SimSun','宋体',serif;font-size:12px}
+  .box{position:absolute;left:${ox}mm;top:${oy}mm;width:210mm;height:140mm}
+  .f{position:absolute;overflow:hidden;white-space:nowrap}.num{text-align:right}
+  </style></head><body>
+  <div class="box">
+    <div class="f" style="left:38mm;top:10mm;width:60mm">${esc(v.voucher_date)}</div>
+    <div class="f" style="left:150mm;top:10mm;width:45mm">${esc(v.voucher_type)}字 第${esc(seq)}号</div>
+    ${lines}
+    <div class="f num" style="left:118mm;top:105mm;width:38mm">${fmt(centsToStr(totD, baseCurrency()))}</div>
+    <div class="f num" style="left:156mm;top:105mm;width:38mm">${fmt(centsToStr(totC, baseCurrency()))}</div>
+    <div class="f" style="left:12mm;top:122mm;width:40mm">附件 ${v.attachment_count} 张</div>
+    <div class="f" style="left:88mm;top:122mm;width:28mm">制单:${esc(v.maker)}</div>
+    <div class="f" style="left:128mm;top:122mm;width:28mm">审核:${esc(v.reviewer || '')}</div>
+    <div class="f" style="left:168mm;top:122mm;width:28mm">记账:</div>
+  </div></body></html>`;
+}
 function printTableHtml(title, subtitle, headers, rows) {
   const head = headers.map(h => `<th>${esc(h)}</th>`).join('');
   const body = rows.map(r => `<tr>${r.map(c => `<td class="num">${esc(c)}</td>`).join('')}</tr>`).join('');
@@ -384,6 +416,8 @@ function renderVoucherEditor(voucher, forceReadOnly = false) {
         ${head}
         <div class="actions">
           ${v ? `<button data-action="voucher:print" data-id="${esc(v.id)}">打印</button>` : ''}
+          ${v ? `<button data-action="voucher:slip" data-id="${esc(v.id)}">套打</button>` : ''}
+          ${v ? `<button data-action="slip:open">套打设置</button>` : ''}
           ${canEdit ? `<button class="primary" data-action="voucher:save">保存</button>` : ''}
           <button data-action="modal:close">${readOnly ? '关闭' : '取消'}</button>
         </div>
@@ -749,6 +783,22 @@ async function loadAux() {
   document.getElementById('ax-item').innerHTML = `<option value="">(请选择)</option>` + state.auxItems.map(a => `<option value="${esc(a.id)}">${AUX_LABELS[a.type] || a.type}:${esc(a.name)}</option>`).join('');
 }
 
+async function renderSlipModal() {
+  const ox = await call('setting:get', 'slip_ox') || '0';
+  const oy = await call('setting:get', 'slip_oy') || '0';
+  render(`
+    <div class="modal-mask"><div class="modal">
+      <h2>套打偏移设置(毫米)</h2>
+      <p class="hint">若套打内容整体偏移,调整以下值。正值=向右/向下,负值=向左/向上。标准凭证纸约 210×140mm。</p>
+      <div class="form-row"><label>横向偏移(mm)</label><input type="number" id="slip-ox" step="0.5" value="${esc(ox)}"></div>
+      <div class="form-row"><label>纵向偏移(mm)</label><input type="number" id="slip-oy" step="0.5" value="${esc(oy)}"></div>
+      <div class="actions">
+        <button class="primary" data-action="slip:save">保存</button>
+        <button data-action="modal:close">取消</button>
+      </div>
+    </div></div>`);
+}
+
 function renderPasswordModal() {
   render(`
     <div class="modal-mask"><div class="modal">
@@ -1076,6 +1126,23 @@ async function handleAction(action, id, arg) {
     case 'voucher:print': {
       const v = await call('voucher:get', id);
       await printHTML(printVoucherHtml(v));
+      break;
+    }
+    case 'voucher:slip': {
+      const v = await call('voucher:get', id);
+      const ox = parseFloat(await call('setting:get', 'slip_ox') || '0') || 0;
+      const oy = parseFloat(await call('setting:get', 'slip_oy') || '0') || 0;
+      await printHTML(printVoucherSlipHtml(v, ox, oy));
+      break;
+    }
+    case 'slip:open': await renderSlipModal(); break;
+    case 'slip:save': {
+      const ox = document.getElementById('slip-ox').value || '0';
+      const oy = document.getElementById('slip-oy').value || '0';
+      await call('setting:set', { key: 'slip_ox', value: ox });
+      await call('setting:set', { key: 'slip_oy', value: oy });
+      toast('套打偏移已保存', 'ok');
+      renderApp();
       break;
     }
     case 'voucher:review': await mut(() => call('voucher:review', id)); break;
