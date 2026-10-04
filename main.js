@@ -79,9 +79,16 @@ function registerIpc() {
     },
 
     'ledger:create': (opts) => service.createLedger(opts),
+    'ledger:list': () => service.listLedgers(),
+    'ledger:switch': (id) => service.switchLedger(id),
 
     'account:list': () => service.listAccounts(),
     'account:add': (opts) => service.addAccount(opts),
+
+    'aux:list': (type) => service.listAuxItems(type),
+    'aux:add': (opts) => service.addAuxItem(opts),
+    'aux:delete': (id) => service.deleteAuxItem(id),
+    'aux:ledger': (o) => service.auxLedger(o.aux_item_id, o.from, o.to),
 
     'opening:set': (opts) => service.setOpeningBalance(opts.account_id, opts.period, opts.amount, opts.currency_code),
     'opening:list': (period) => service.listOpeningBalances(period),

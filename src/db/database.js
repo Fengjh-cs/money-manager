@@ -17,6 +17,14 @@ function uuid() {
   return crypto.randomUUID();
 }
 
+/** 对旧库做增量迁移(补列等),保持向后兼容 */
+function migrate(database) {
+  const cols = database.all('PRAGMA table_info(voucher_entries)').map(c => c.name);
+  if (!cols.includes('aux_item_id')) {
+    database.exec('ALTER TABLE voucher_entries ADD COLUMN aux_item_id TEXT');
+  }
+}
+
 /** 原子写入:先写临时文件,再重命名覆盖 */
 function atomicWrite(filePath, buffer) {
   const dir = path.dirname(filePath);
@@ -116,6 +124,7 @@ async function openDatabase(dbFilePath) {
   }
   const database = new Database(db, dbFilePath, SQL);
   for (const stmt of schema) database.exec(stmt);
+  migrate(database);
   return database;
 }
 

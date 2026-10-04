@@ -167,6 +167,31 @@ async function main() {
   check('筹资流入 1000', cfStmt.financing.inflow === '1000.00', cfStmt.financing.inflow);
   check('现金净增加 1710', cfStmt.net_increase === '1710.00', cfStmt.net_increase);
 
+  console.log('— 多账套 —');
+  const firstLedgerId = svc.getLedger().id;
+  const lg2 = svc.createLedger({ name: '第二账套', accounting_standard: '小企业会计准则', opening_period: '2026-02' });
+  check('新建第二账套后共 2 个', svc.listLedgers().length === 2);
+  check('活动账套已切换为新账套', svc.getLedger().id === lg2.id);
+  svc.switchLedger(firstLedgerId);
+  check('切回第一账套', svc.getLedger().id === firstLedgerId);
+
+  console.log('— 辅助核算 —');
+  const aux = svc.addAuxItem({ type: 'customer', code: 'KH001', name: '甲公司' });
+  check('新增辅助对象', !!aux.id);
+  const vAux = svc.createVoucher({
+    voucher_date: '2026-01-08', voucher_type: '记',
+    entries: [
+      { summary: '销售给甲公司', account_id: '1001', debit: '500', aux_item_id: aux.id },
+      { summary: '销售给甲公司', account_id: '6001', credit: '500' },
+    ],
+  });
+  const eAux = vAux.entries.find(e => e.aux_item_id === aux.id);
+  check('分录带辅助对象', !!eAux);
+  svc.reviewVoucher(vAux.id); svc.postVoucher(vAux.id);
+  const auxLedger = svc.auxLedger(aux.id, '2026-01', '2026-01');
+  check('辅助明细有记录', auxLedger.lines.length === 1, '行数=' + auxLedger.lines.length);
+  assertThrows('已使用的辅助对象不能删除', () => svc.deleteAuxItem(aux.id), '不能删除');
+
   db.close();
   fs.rmSync(tmp, { recursive: true, force: true });
 

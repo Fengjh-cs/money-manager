@@ -15,6 +15,7 @@ const state = {
   lastReports: null,
   lastLedger: null,
   lastGl: null,
+  auxItems: [],
 };
 
 function currentPeriod() {
@@ -134,6 +135,8 @@ function leafAccounts() {
   return state.accounts.filter(a => a.is_leaf && a.enabled);
 }
 
+const AUX_LABELS = { customer: '客户', supplier: '供应商', department: '部门', project: '项目' };
+
 /* ============ 渲染入口 ============ */
 const appEl = () => document.getElementById('app');
 
@@ -163,11 +166,12 @@ function renderLogin() {
 function renderSetup() {
   const standards = state.standards.map((s, i) => `
     <label><input type="radio" name="standard" value="${esc(s)}" ${i === 0 ? 'checked' : ''}>${esc(s)}</label>`).join('');
+  const isNew = !!state.ledger; // 已有账套 → 属于「新建额外账套」
   render(`
     <div class="setup-wrap">
       <div class="setup-card">
-        <h1>建账向导</h1>
-        <p class="hint">首次使用,请填写以下信息建立账套。启用期间一般为开始记账的月份。</p>
+        <h1>${isNew ? '新建账套' : '建账向导'}</h1>
+        <p class="hint">${isNew ? '填写以下信息建立新账套。' : '首次使用,请填写以下信息建立账套。启用期间一般为开始记账的月份。'}</p>
         <div class="form-row"><label>公司名称</label><input id="setup-name" placeholder="例如:XX科技有限公司"></div>
         <div class="form-row"><label>会计准则</label><div class="radio-group">${standards}</div></div>
         <div class="form-row"><label>启用期间(年月)</label><input id="setup-period" type="month" value="${currentPeriod()}"></div>
@@ -175,6 +179,7 @@ function renderSetup() {
           <select id="setup-currency">${state.currencies.map(c => `<option value="${esc(c.code)}" ${c.code === 'CNY' ? 'selected' : ''}>${esc(c.name)}(${c.code})</option>`).join('')}</select>
         </div>
         <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
+          ${isNew ? '<button data-action="setup:cancel">返回</button>' : ''}
           <button class="primary" data-action="setup:submit">建立账套</button>
         </div>
       </div>
@@ -191,9 +196,12 @@ const NAV = [
   { key: 'cashflow', label: '现金流量表' },
   { key: 'closing', label: '期末处理' },
   { key: 'opening', label: '期初余额' },
+  { key: 'accounts', label: '科目管理' },
+  { key: 'aux', label: '辅助核算' },
   { key: 'rates', label: '汇率设置' },
   { key: 'audit', label: '审计日志' },
   { key: 'snapshots', label: '备份与回滚' },
+  { key: 'ledgers', label: '账套管理' },
 ];
 
 function renderApp() {
@@ -225,9 +233,12 @@ function viewHtml(key) {
     case 'cashflow': return cashflowHtml();
     case 'closing': return closingHtml();
     case 'opening': return openingHtml();
+    case 'accounts': return accountsHtml();
+    case 'aux': return auxHtml();
     case 'rates': return ratesHtml();
     case 'audit': return auditHtml();
     case 'snapshots': return snapshotsHtml();
+    case 'ledgers': return ledgersHtml();
     default: return '<p>未知页面</p>';
   }
 }
@@ -299,6 +310,9 @@ function accountOptions(selected) {
 function currencyOptions(selected) {
   return state.currencies.map(c => `<option value="${esc(c.code)}" ${c.code === selected ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
 }
+function auxOptions(selected) {
+  return `<option value="">(无)</option>` + (state.auxItems || []).map(a => `<option value="${esc(a.id)}" ${a.id === selected ? 'selected' : ''}>${AUX_LABELS[a.type] || a.type}:${esc(a.name)}</option>`).join('');
+}
 
 function renderVoucherEditor(voucher) {
   editingId = voucher ? voucher.id : null;
@@ -313,7 +327,7 @@ function renderVoucherEditor(voucher) {
 
   let entries = [];
   if (v && v.entries) {
-    entries = v.entries.map(e => ({ summary: e.summary, account_id: e.account_id, currency_code: e.currency_code, rate: rateStr(e.exchange_rate_scaled), debit: e.currency_code === baseCurrency() ? centsToStr(e.debit, e.currency_code) : centsToStr(e.debit_foreign, e.currency_code), credit: e.currency_code === baseCurrency() ? centsToStr(e.credit, e.currency_code) : centsToStr(e.credit_foreign, e.currency_code) }));
+    entries = v.entries.map(e => ({ summary: e.summary, account_id: e.account_id, currency_code: e.currency_code, rate: rateStr(e.exchange_rate_scaled), debit: e.currency_code === baseCurrency() ? centsToStr(e.debit, e.currency_code) : centsToStr(e.debit_foreign, e.currency_code), credit: e.currency_code === baseCurrency() ? centsToStr(e.credit, e.currency_code) : centsToStr(e.credit_foreign, e.currency_code), aux_item_id: e.aux_item_id || '' }));
   } else {
     entries = [emptyEntry(), emptyEntry()];
   }
@@ -328,7 +342,7 @@ function renderVoucherEditor(voucher) {
       <label>附件</label><input id="ev-attach" type="number" min="0" value="${defaultAttach}" style="width:70px" ${canEdit ? '' : 'disabled'}>
     </div>
     <table class="entry-grid">
-      <thead><tr><th style="width:30%">摘要</th><th>科目</th><th style="width:100px">币种</th><th style="width:100px">汇率</th><th style="width:120px">借方金额</th><th style="width:120px">贷方金额</th><th></th></tr></thead>
+      <thead><tr><th style="width:24%">摘要</th><th>科目</th><th style="width:90px">币种</th><th style="width:90px">汇率</th><th style="width:90px">辅助核算</th><th style="width:110px">借方金额</th><th style="width:110px">贷方金额</th><th></th></tr></thead>
       <tbody id="entry-rows"></tbody>
     </table>
     ${canEdit ? '<button class="link" data-action="voucher:addline">+ 增加一行</button>' : ''}
@@ -357,7 +371,7 @@ function renderVoucherEditor(voucher) {
 }
 
 function emptyEntry() {
-  return { summary: '', account_id: leafAccounts()[0] ? leafAccounts()[0].id : '', currency_code: baseCurrency(), rate: '', debit: '', credit: '' };
+  return { summary: '', account_id: leafAccounts()[0] ? leafAccounts()[0].id : '', currency_code: baseCurrency(), rate: '', debit: '', credit: '', aux_item_id: '' };
 }
 
 function renderEntryRows(entries, canEdit) {
@@ -369,6 +383,7 @@ function renderEntryRows(entries, canEdit) {
       <td><select class="e-account" ${canEdit ? '' : 'disabled'}>${accountOptions(e.account_id)}</select></td>
       <td><select class="e-currency" ${canEdit ? '' : 'disabled'}>${currencyOptions(e.currency_code)}</select></td>
       <td><input class="e-rate" value="${esc(e.rate)}" placeholder="外币汇率" ${canEdit ? '' : 'disabled'}></td>
+      <td><select class="e-aux" ${canEdit ? '' : 'disabled'}>${auxOptions(e.aux_item_id)}</select></td>
       <td><input class="e-debit amount" value="${esc(e.debit)}" ${canEdit ? '' : 'disabled'}></td>
       <td><input class="e-credit amount" value="${esc(e.credit)}" ${canEdit ? '' : 'disabled'}></td>
       <td>${canEdit ? `<button class="small danger" data-action="voucher:delline" data-line="${i}">删</button>` : ''}</td>
@@ -385,6 +400,7 @@ function readEntryRows() {
       exchange_rate: tr.querySelector('.e-rate').value,
       debit: tr.querySelector('.e-debit').value,
       credit: tr.querySelector('.e-credit').value,
+      aux_item_id: tr.querySelector('.e-aux').value || null,
     });
   });
   return rows;
@@ -621,6 +637,93 @@ async function loadCashflow() {
     </tbody></table>`;
 }
 
+/* ---------- 科目管理 ---------- */
+function accountsHtml() {
+  return `
+    <div class="page-head"><h1>科目管理</h1>
+      <button class="primary" data-action="account:new" ${isAccountant() ? '' : 'hidden'}>+ 新增科目</button>
+    </div>
+    <div class="panel"><div id="account-list"></div></div>`;
+}
+
+async function loadAccounts() {
+  state.accounts = await call('account:list');
+  const rows = state.accounts.map(a => `<tr>
+    <td>${esc(a.code)}</td><td>${esc(a.name)}</td><td>${esc(a.category_label || a.category)}</td>
+    <td>${a.direction === 'debit' ? '借方' : '贷方'}</td>
+    <td>${a.is_leaf ? '末级' : '非末级'}</td>
+  </tr>`).join('');
+  document.getElementById('account-list').innerHTML = `<table class="grid"><thead><tr><th>编码</th><th>名称</th><th>类别</th><th>方向</th><th>级次</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderAccountModal() {
+  const parentOpts = `<option value="">(无,顶级科目)</option>` + state.accounts.filter(a => !a.is_leaf).map(a => `<option value="${esc(a.id)}">${esc(a.code)} ${esc(a.name)}</option>`).join('');
+  render(`
+    <div class="modal-mask"><div class="modal">
+      <h2>新增科目</h2>
+      <div class="form-row"><label>科目编码(4位以上数字)</label><input id="ac-code" placeholder="如 660201"></div>
+      <div class="form-row"><label>科目名称</label><input id="ac-name"></div>
+      <div class="form-row"><label>类别</label><select id="ac-cat">
+        <option value="asset">资产</option><option value="liability">负债</option><option value="equity">所有者权益</option><option value="cost">成本</option><option value="pl">损益</option><option value="common">共同</option>
+      </select></div>
+      <div class="form-row"><label>余额方向</label><select id="ac-dir"><option value="debit">借方</option><option value="credit">贷方</option></select></div>
+      <div class="form-row"><label>上级科目(可选)</label><select id="ac-parent">${parentOpts}</select></div>
+      <div class="actions">
+        <button class="primary" data-action="account:save">保存</button>
+        <button data-action="modal:close">取消</button>
+      </div>
+    </div></div>`);
+}
+
+/* ---------- 辅助核算 ---------- */
+function auxHtml() {
+  return `
+    <div class="page-head"><h1>辅助核算</h1>
+      <button class="primary" data-action="aux:new" ${isAccountant() ? '' : 'hidden'}>+ 新增对象</button>
+    </div>
+    <div class="panel">
+      <div class="section-title">辅助核算对象(往来单位/部门/项目)</div>
+      <div id="aux-list"></div>
+    </div>
+    <div class="panel">
+      <div class="section-title">按辅助对象查明细</div>
+      <div class="toolbar">
+        <label>对象</label><select id="ax-item"></select>
+        <label>从</label><input id="ax-from" type="month" value="${state.voucherPeriod || currentPeriod()}" style="width:150px">
+        <label>到</label><input id="ax-to" type="month" value="${state.voucherPeriod || currentPeriod()}" style="width:150px">
+        <button class="primary" data-action="aux:query">查询</button>
+      </div>
+      <div id="aux-result"></div>
+    </div>`;
+}
+
+async function loadAux() {
+  state.auxItems = await call('aux:list', null);
+  const rows = state.auxItems.map(a => `<tr>
+    <td>${AUX_LABELS[a.type] || a.type}</td><td>${esc(a.code)}</td><td>${esc(a.name)}</td>
+    <td>${isAccountant() ? `<button class="link danger" data-action="aux:delete" data-id="${esc(a.id)}">删除</button>` : ''}</td>
+  </tr>`).join('');
+  document.getElementById('aux-list').innerHTML = rows
+    ? `<table class="grid"><thead><tr><th>类型</th><th>编码</th><th>名称</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
+    : '<div class="empty">暂无辅助核算对象</div>';
+  document.getElementById('ax-item').innerHTML = `<option value="">(请选择)</option>` + state.auxItems.map(a => `<option value="${esc(a.id)}">${AUX_LABELS[a.type] || a.type}:${esc(a.name)}</option>`).join('');
+}
+
+function renderAuxModal() {
+  const typeOpts = Object.entries(AUX_LABELS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+  render(`
+    <div class="modal-mask"><div class="modal">
+      <h2>新增辅助核算对象</h2>
+      <div class="form-row"><label>类型</label><select id="aux-type">${typeOpts}</select></div>
+      <div class="form-row"><label>编码</label><input id="aux-code" placeholder="如 KH001"></div>
+      <div class="form-row"><label>名称</label><input id="aux-name" placeholder="如 甲公司"></div>
+      <div class="actions">
+        <button class="primary" data-action="aux:save">保存</button>
+        <button data-action="modal:close">取消</button>
+      </div>
+    </div></div>`);
+}
+
 /* ---------- 期初余额 ---------- */
 function openingHtml() {
   const opts = leafAccounts().map(a => `<option value="${esc(a.id)}">${esc(a.code)} ${esc(a.name)}</option>`).join('');
@@ -728,6 +831,28 @@ async function loadSnapshots() {
     : '<div class="empty">暂无备份,建议先「立即备份」</div>';
 }
 
+/* ---------- 账套管理 ---------- */
+function ledgersHtml() {
+  return `
+    <div class="page-head"><h1>账套管理</h1>
+      <button class="primary" data-action="ledger:new" ${isAccountant() ? '' : 'hidden'}>+ 新建账套</button>
+    </div>
+    <div class="panel"><div id="ledger-list"></div></div>`;
+}
+
+async function loadLedgers() {
+  const list = await call('ledger:list');
+  const cur = state.ledger ? state.ledger.id : null;
+  const rows = list.map(l => `<tr>
+    <td>${esc(l.name)}</td><td>${esc(l.company_name)}</td><td>${esc(l.accounting_standard)}</td><td>${esc(l.base_currency)}</td>
+    <td>${l.id === cur ? '<span class="badge posted">当前</span>' : ''}</td>
+    <td>${l.id !== cur ? `<button class="link" data-action="ledger:switch" data-id="${esc(l.id)}">切换</button>` : ''}</td>
+  </tr>`).join('');
+  document.getElementById('ledger-list').innerHTML = rows
+    ? `<table class="grid"><thead><tr><th>账套名</th><th>公司</th><th>准则</th><th>本位币</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`
+    : '<div class="empty">暂无账套</div>';
+}
+
 /* ============ 动作处理 ============ */
 async function handleAction(action, id, arg) {
   switch (action) {
@@ -759,6 +884,65 @@ async function handleAction(action, id, arg) {
     case 'nav': {
       state.nav = arg;
       renderApp();
+      break;
+    }
+    case 'setup:cancel': renderApp(); break;
+    case 'ledger:new': renderSetup(); break;
+    case 'account:new': renderAccountModal(); break;
+    case 'aux:new': renderAuxModal(); break;
+    case 'aux:save': {
+      const type = document.getElementById('aux-type').value;
+      const code = document.getElementById('aux-code').value.trim();
+      const name = document.getElementById('aux-name').value.trim();
+      try {
+        await call('aux:add', { type, code, name });
+        toast('已新增', 'ok');
+        state.nav = 'aux';
+        renderApp();
+      } catch (e) { toast(e.message, 'err'); }
+      break;
+    }
+    case 'aux:delete': {
+      if (!confirm('确定删除该辅助核算对象吗?')) break;
+      try { await call('aux:delete', id); toast('已删除', 'ok'); loadAux(); } catch (e) { toast(e.message, 'err'); }
+      break;
+    }
+    case 'aux:query': {
+      const aux_item_id = document.getElementById('ax-item').value;
+      if (!aux_item_id) { toast('请选择辅助核算对象', 'err'); break; }
+      const from = document.getElementById('ax-from').value;
+      const to = document.getElementById('ax-to').value;
+      const res = await call('aux:ledger', { aux_item_id, from, to });
+      const lines = res.lines.map(l => `<tr>
+        <td>${esc(l.voucher_date)}</td><td>${esc(l.voucher_no)}</td><td>${esc(l.summary)}</td><td>${esc(l.account_code)} ${esc(l.account_name)}</td>
+        <td class="num">${fmt(l.debit)}</td><td class="num">${fmt(l.credit)}</td>
+      </tr>`).join('');
+      document.getElementById('aux-result').innerHTML = lines
+        ? `<table class="grid"><thead><tr><th>日期</th><th>凭证号</th><th>摘要</th><th>科目</th><th>借方</th><th>贷方</th></tr></thead><tbody>${lines}</tbody></table>`
+        : '<div class="empty">该对象该区间无发生额</div>';
+      break;
+    }
+    case 'account:save': {
+      const code = document.getElementById('ac-code').value.trim();
+      const name = document.getElementById('ac-name').value.trim();
+      const category = document.getElementById('ac-cat').value;
+      const direction = document.getElementById('ac-dir').value;
+      const parent_id = document.getElementById('ac-parent').value || null;
+      try {
+        await call('account:add', { code, name, category, direction, parent_id });
+        toast('科目已新增', 'ok');
+        state.nav = 'accounts';
+        renderApp();
+      } catch (e) { toast(e.message, 'err'); }
+      break;
+    }
+    case 'ledger:switch': {
+      try {
+        state.ledger = await call('ledger:switch', id);
+        await refreshAccounts();
+        toast(`已切换到账套「${state.ledger.name}」`, 'ok');
+        loadLedgers();
+      } catch (e) { toast(e.message, 'err'); }
       break;
     }
     case 'voucher:filter': loadVoucherList(); break;
@@ -809,6 +993,7 @@ async function handleAction(action, id, arg) {
         <td><select class="e-account">${accountOptions()}</select></td>
         <td><select class="e-currency">${currencyOptions(baseCurrency())}</select></td>
         <td><input class="e-rate" placeholder="外币汇率"></td>
+        <td><select class="e-aux">${auxOptions()}</select></td>
         <td><input class="e-debit amount"></td>
         <td><input class="e-credit amount"></td>
         <td><button class="small danger" data-action="voucher:delline" data-line="${idx}">删</button></td>`;
@@ -952,6 +1137,7 @@ async function mut(fn) {
 
 async function refreshAccounts() {
   state.accounts = await call('account:list');
+  try { state.auxItems = await call('aux:list', null); } catch (e) { state.auxItems = []; }
 }
 
 async function afterView(key) {
@@ -965,9 +1151,12 @@ async function afterView(key) {
       case 'cashflow': await loadCashflow(); break;
       case 'closing': await loadClosing(); break;
       case 'opening': await loadOpening(); break;
+      case 'accounts': await loadAccounts(); break;
+      case 'aux': await loadAux(); break;
       case 'rates': await loadRates(); break;
       case 'audit': await loadAudit(); break;
       case 'snapshots': await loadSnapshots(); break;
+      case 'ledgers': await loadLedgers(); break;
     }
   } catch (e) {
     toast(e.message, 'err');

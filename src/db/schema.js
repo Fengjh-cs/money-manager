@@ -111,10 +111,22 @@ const schema = [
     debit_foreign INTEGER,
     credit_foreign INTEGER,
     debit INTEGER NOT NULL DEFAULT 0,
-    credit INTEGER NOT NULL DEFAULT 0
+    credit INTEGER NOT NULL DEFAULT 0,
+    aux_item_id TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_entries_voucher ON voucher_entries(voucher_id)`,
   `CREATE INDEX IF NOT EXISTS idx_entries_account ON voucher_entries(account_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_entries_aux ON voucher_entries(aux_item_id)`,
+
+  // ---- 辅助核算对象(往来单位/部门/项目)----
+  `CREATE TABLE IF NOT EXISTS aux_items (
+    id TEXT PRIMARY KEY,
+    ledger_id TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('customer','supplier','department','project')),
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
 
   // ---- 会计期间 ----
   `CREATE TABLE IF NOT EXISTS periods (

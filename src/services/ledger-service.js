@@ -106,6 +106,20 @@ class LedgerService {
 
   listStandards() { return Object.values(STANDARDS); }
 
+  listLedgers() {
+    return this.db.all('SELECT id, name, company_name, accounting_standard, base_currency, created_at FROM ledgers ORDER BY created_at');
+  }
+
+  switchLedger(id) {
+    const l = this.db.get('SELECT * FROM ledgers WHERE id=?', [id]);
+    if (!l) throw new Error('账套不存在');
+    this.ledger = l;
+    this.db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)', ['active_ledger_id', id]);
+    this._audit('切换账套', 'ledger', id, null, { name: l.name });
+    this.db.save();
+    return this.ledger;
+  }
+
   createLedger(opts) {
     const standard = opts.accounting_standard;
     if (!charts[standard]) throw new Error('未知会计准则(可选:' + Object.values(STANDARDS).join(' / ') + ')');
@@ -218,6 +232,53 @@ class LedgerService {
     return this.db.all('SELECT * FROM currencies WHERE enabled=1 ORDER BY code');
   }
 
+  // ================= 辅助核算 =================
+  listAuxItems(type = null) {
+    return this.db.all(
+      'SELECT * FROM aux_items WHERE ledger_id=? AND (? IS NULL OR type=?) ORDER BY type, code',
+      [this.ledger.id, type, type]
+    );
+  }
+
+  addAuxItem({ type, code, name }) {
+    this._requireAccountant();
+    if (!['customer', 'supplier', 'department', 'project'].includes(type)) throw new Error('辅助核算类型无效');
+    if (!code || !code.trim()) throw new Error('编码不能为空');
+    if (!name || !name.trim()) throw new Error('名称不能为空');
+    const id = uuid();
+    this.db.run(
+      'INSERT INTO aux_items (id, ledger_id, type, code, name, created_at) VALUES (?,?,?,?,?,?)',
+      [id, this.ledger.id, type, code.trim(), name.trim(), now()]
+    );
+    this._audit('新增辅助核算', 'aux_item', id, null, { type, code, name });
+    this.db.save();
+    return { id, type, code: code.trim(), name: name.trim() };
+  }
+
+  deleteAuxItem(id) {
+    this._requireAccountant();
+    const used = this.db.get('SELECT COUNT(*) AS c FROM voucher_entries WHERE aux_item_id=?', [id]);
+    if (used.c > 0) throw new Error('该辅助核算已被凭证使用,不能删除');
+    this.db.run('DELETE FROM aux_items WHERE id=? AND ledger_id=?', [id, this.ledger.id]);
+    this._audit('删除辅助核算', 'aux_item', id, null, null);
+    this.db.save();
+    return { deleted: true };
+  }
+
+  auxLedger(auxItemId, from, to) {
+    const item = this.db.get('SELECT * FROM aux_items WHERE id=?', [auxItemId]);
+    if (!item) throw new Error('辅助核算对象不存在');
+    const rows = this.db.all(
+      `SELECT v.voucher_date, v.voucher_no, e.summary, e.debit, e.credit, a.code AS account_code, a.name AS account_name
+       FROM voucher_entries e JOIN vouchers v ON e.voucher_id=v.id
+       JOIN accounts a ON a.ledger_id=? AND a.id=e.account_id
+       WHERE v.ledger_id=? AND e.aux_item_id=? AND v.status='posted' AND v.period>=? AND v.period<=?
+       ORDER BY v.voucher_date, v.voucher_no`,
+      [this.ledger.id, this.ledger.id, auxItemId, from, to]
+    );
+    return { item, lines: rows.map(r => ({ voucher_date: r.voucher_date, voucher_no: r.voucher_no, summary: r.summary, account_code: r.account_code, account_name: r.account_name, debit: dec(r.debit), credit: dec(r.credit) })) };
+  }
+
   // ================= 凭证 =================
   _normalizeEntries(entries, baseCurrency) {
     if (!Array.isArray(entries) || entries.length < 2) throw new Error('凭证至少需要两条分录');
@@ -241,6 +302,7 @@ class LedgerService {
           summary, account_id: e.account_id, currency_code: currencyCode,
           exchange_rate_scaled: null, debit_foreign: null, credit_foreign: null,
           debit: toSafeNumber(debit), credit: toSafeNumber(credit),
+          aux_item_id: e.aux_item_id || null,
           _debit: debit, _credit: credit,
         };
       }
@@ -261,6 +323,7 @@ class LedgerService {
         exchange_rate_scaled: toSafeNumber(rateScaled),
         debit_foreign: toSafeNumber(debitF), credit_foreign: toSafeNumber(creditF),
         debit: toSafeNumber(debitB), credit: toSafeNumber(creditB),
+        aux_item_id: e.aux_item_id || null,
         _debit: debitB, _credit: creditB,
       };
     });
@@ -307,9 +370,9 @@ class LedgerService {
       );
       norm.forEach((e, i) => {
         this.db.run(
-          `INSERT INTO voucher_entries (voucher_id, line_no, summary, account_id, currency_code, exchange_rate_scaled, debit_foreign, credit_foreign, debit, credit)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          [id, i + 1, e.summary, e.account_id, e.currency_code, e.exchange_rate_scaled, e.debit_foreign, e.credit_foreign, e.debit, e.credit]
+          `INSERT INTO voucher_entries (voucher_id, line_no, summary, account_id, currency_code, exchange_rate_scaled, debit_foreign, credit_foreign, debit, credit, aux_item_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          [id, i + 1, e.summary, e.account_id, e.currency_code, e.exchange_rate_scaled, e.debit_foreign, e.credit_foreign, e.debit, e.credit, e.aux_item_id]
         );
       });
       this._audit('创建凭证', 'voucher', id, null, { voucher_no: voucherNo, period, voucher_type, attachment_count, entries: norm }, null);
@@ -423,9 +486,9 @@ class LedgerService {
         [voucher_date, period, voucher_type, attachment_count, id]);
       norm.forEach((e, i) => {
         this.db.run(
-          `INSERT INTO voucher_entries (voucher_id, line_no, summary, account_id, currency_code, exchange_rate_scaled, debit_foreign, credit_foreign, debit, credit)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          [id, i + 1, e.summary, e.account_id, e.currency_code, e.exchange_rate_scaled, e.debit_foreign, e.credit_foreign, e.debit, e.credit]
+          `INSERT INTO voucher_entries (voucher_id, line_no, summary, account_id, currency_code, exchange_rate_scaled, debit_foreign, credit_foreign, debit, credit, aux_item_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          [id, i + 1, e.summary, e.account_id, e.currency_code, e.exchange_rate_scaled, e.debit_foreign, e.credit_foreign, e.debit, e.credit, e.aux_item_id]
         );
       });
       this._audit('修改凭证', 'voucher', id, { voucher_no: v.voucher_no }, { voucher_date, period, voucher_type, entries: norm });
