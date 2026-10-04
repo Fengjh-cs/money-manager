@@ -1,0 +1,18 @@
+{
+  "name": "ledger-book",
+  "version": "0.1.0",
+  "description": "复式记账桌面程序(面向会计与审计)",
+  "main": "main.js",
+  "author": "",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "node test/smoke.js"
+  },
+  "dependencies": {
+    "sql.js": "^1.13.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0"
+  }
+}

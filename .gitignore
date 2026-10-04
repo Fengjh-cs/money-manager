@@ -1,0 +1,14 @@
+# 依赖
+node_modules/
+
+# 运行数据(账套数据库、快照、备份)
+data/
+
+# 打包产物
+dist/
+out/
+
+# 日志与系统文件
+*.log
+.DS_Store
+Thumbs.db
