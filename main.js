@@ -236,6 +236,7 @@ function registerIpc() {
     'report:subsidiaryLedger': (o) => service.subsidiaryLedger(o.account_id, o.from, o.to),
     'report:generalLedger': (o) => service.generalLedger(o.account_id, o.from, o.to),
     'report:cashFlow': (period) => service.cashFlowStatement(period),
+    'report:cashFlowIndirect': (period) => service.cashFlowIndirect(period),
 
     'audit:list': (limit) => service.listAuditLogs(limit || 500),
 

@@ -267,6 +267,26 @@ async function main() {
   ]);
   check('导入成功 1 张、失败 2 张', vImport.imported === 1 && vImport.errors.length === 2, JSON.stringify(vImport));
 
+  console.log('— 现金流量表(间接法) —');
+  const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-cf-'));
+  const db2 = await openDatabase(path.join(tmp2, 'l.db'));
+  const svc2 = new LedgerService(db2, tmp2);
+  svc2.setUser(svc2.listUsers().find(x => x.role === 'accountant'));
+  svc2.createLedger({ name: '现金流测试', accounting_standard: '企业会计准则', opening_period: '2026-01' });
+  svc2.setOpeningBalance('1122', '2026-01', '100.00');
+  svc2.setOpeningBalance('2202', '2026-01', '-50.00');
+  const post2 = (v) => { svc2.reviewVoucher(v.id); svc2.postVoucher(v.id); };
+  post2(svc2.createVoucher({ voucher_date: '2026-01-10', entries: [{ summary: '赊销', account_id: '1122', debit: '200' }, { summary: '赊销', account_id: '6001', credit: '200' }] }));
+  post2(svc2.createVoucher({ voucher_date: '2026-01-12', entries: [{ summary: '收款', account_id: '100201', debit: '100' }, { summary: '收款', account_id: '1122', credit: '100' }] }));
+  post2(svc2.createVoucher({ voucher_date: '2026-01-15', entries: [{ summary: '折旧', account_id: '660205', debit: '50' }, { summary: '折旧', account_id: '1602', credit: '50' }] }));
+  post2(svc2.createVoucher({ voucher_date: '2026-01-18', entries: [{ summary: '办公费', account_id: '660202', debit: '30' }, { summary: '办公费', account_id: '100201', credit: '30' }] }));
+  const ind = svc2.cashFlowIndirect('2026-01');
+  check('间接法:净利润 120', ind.net_profit === '120.00', ind.net_profit);
+  check('间接法:非现金调整 50', ind.non_cash_adjust === '50.00', ind.non_cash_adjust);
+  check('间接法:经营现金流 70', ind.operating_net === '70.00', ind.operating_net);
+  db2.close();
+  fs.rmSync(tmp2, { recursive: true, force: true });
+
   db.close();
   fs.rmSync(tmp, { recursive: true, force: true });
 

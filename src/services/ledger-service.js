@@ -899,6 +899,43 @@ class LedgerService {
     return { period, operating, investing, financing, net_increase: dec(netIncrease), detail };
   }
 
+  /**
+   * 现金流量表(间接法):从净利润出发,加回非现金费用、调整营运资本变动。
+   * 简化说明:非现金费用=累计折旧/累计摊销/减值准备的贷方增加;营运资本=应收/存货/应付的期间净变动。
+   */
+  cashFlowIndirect(period) {
+    const profit = M.toBigInt(M.parseAmount(this.incomeStatement(period).profit));
+    const b = this._signedBalances(period);
+
+    const NONCASH = ['1231', '1471', '1512', '1602', '1603', '1702', '1703'];
+    const RECEIVABLE = ['1121', '1122', '1123', '1221'];
+    const INVENTORY = ['1401', '1402', '1403', '1404', '1405', '1406', '1407', '1408'];
+    const PAYABLE = ['2201', '2202', '2203', '2211', '2221', '2241'];
+    const inAny = (code, lists) => lists.some(list => list.some(p => String(code).startsWith(p)));
+
+    let nonCash = 0n, recvDelta = 0n, invDelta = 0n, payDelta = 0n;
+    for (const a of this.db.all('SELECT * FROM accounts WHERE ledger_id=?', [this.ledger.id])) {
+      const s = b[a.id] || { opening: 0n, period_debit: 0n, period_credit: 0n, ending: 0n };
+      const net = s.period_debit - s.period_credit; // 本期间净变动(借-贷,有符号)
+      if (inAny(a.code, [NONCASH])) nonCash += s.period_credit - s.period_debit;
+      if (inAny(a.code, [RECEIVABLE])) recvDelta += net;
+      if (inAny(a.code, [INVENTORY])) invDelta += net;
+      if (inAny(a.code, [PAYABLE])) payDelta += net;
+    }
+
+    const wcDelta = recvDelta + invDelta + payDelta;
+    const operatingNet = profit + nonCash - wcDelta;
+    return {
+      period,
+      net_profit: dec(profit),
+      non_cash_adjust: dec(nonCash),
+      receivable_adjust: dec(-recvDelta),
+      inventory_adjust: dec(-invDelta),
+      payable_adjust: dec(-payDelta),
+      operating_net: dec(operatingNet),
+    };
+  }
+
   // ================= 审计日志 =================
   listAuditLogs(limit = 500) {
     return this.db.all('SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?', [limit]);

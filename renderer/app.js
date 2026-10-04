@@ -645,23 +645,35 @@ function cashflowHtml() {
       <div class="toolbar"><label>期间</label><input id="cf-period" type="month" value="${state.voucherPeriod || currentPeriod()}">
       <button class="primary" data-action="cashflow:load">查询</button></div>
       <div id="cf-result"></div>
-      <p class="hint" style="margin-top:12px">简化直接法:按涉及现金/银行科目的收付分类为经营/投资/筹资活动。</p>
+      <p class="hint" style="margin-top:12px">直接法按现金收付分类;间接法从净利润调节为经营现金流。均为简化版(分类规则见源码注释)。</p>
     </div>`;
 }
 
 async function loadCashflow() {
   const period = document.getElementById('cf-period').value || currentPeriod();
   const cf = await call('report:cashFlow', period);
+  const ind = await call('report:cashFlowIndirect', period);
   const groupRow = (label, g) => `
     <tr><td>${label}流入</td><td class="num">${fmt(g.inflow)}</td><td class="num"></td></tr>
     <tr><td>${label}流出</td><td class="num"></td><td class="num">${fmt(g.outflow)}</td></tr>
     <tr class="totals"><td>${label}净额</td><td colspan="2" class="num">${fmt(g.net)}</td></tr>`;
+  const indirectRow = (label, val) => `<tr><td>${label}</td><td class="num">${fmt(val)}</td></tr>`;
   document.getElementById('cf-result').innerHTML = `
+    <div class="section-title">直接法(按现金收付分类)</div>
     <table class="grid"><thead><tr><th>项目</th><th>流入</th><th>流出</th></tr></thead><tbody>
     ${groupRow('经营活动', cf.operating)}
     ${groupRow('投资活动', cf.investing)}
     ${groupRow('筹资活动', cf.financing)}
     <tr class="totals"><td>现金及现金等价物净增加额</td><td colspan="2" class="num">${fmt(cf.net_increase)}</td></tr>
+    </tbody></table>
+    <div class="section-title" style="margin-top:16px">间接法(净利润调节为经营现金流)</div>
+    <table class="grid"><thead><tr><th>项目</th><th>金额</th></tr></thead><tbody>
+    ${indirectRow('净利润', ind.net_profit)}
+    ${indirectRow('加:非现金费用(折旧/摊销/减值)', ind.non_cash_adjust)}
+    ${indirectRow('应收款项变动', ind.receivable_adjust)}
+    ${indirectRow('存货变动', ind.inventory_adjust)}
+    ${indirectRow('应付款项变动', ind.payable_adjust)}
+    <tr class="totals"><td>经营活动现金流量净额</td><td class="num">${fmt(ind.operating_net)}</td></tr>
     </tbody></table>`;
 }
 
