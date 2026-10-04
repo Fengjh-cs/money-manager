@@ -60,7 +60,11 @@ async function main() {
   const ledger = svc.createLedger({ name: '测试公司', accounting_standard: '企业会计准则', opening_period: '2026-01' });
   check('账套创建', !!ledger && svc.hasLedger());
   const accounts = svc.listAccounts();
-  check('科目已预置(>80)', accounts.length > 80, '科目数=' + accounts.length);
+  check('科目已预置(>120)', accounts.length > 120, '科目数=' + accounts.length);
+  const acct660202 = accounts.find(a => a.code === '660202');
+  check('预置明细科目(管理费用-办公费)', !!acct660202 && acct660202.is_leaf === 1);
+  const acct6602 = accounts.find(a => a.code === '6602');
+  check('管理费用已转为非末级', acct6602 && acct6602.is_leaf === 0);
 
   console.log('— 用户/角色 —');
   const users = svc.listUsers();
@@ -254,7 +258,7 @@ async function main() {
 
   console.log('— 凭证批量导入 —');
   const vImport = svc.importVouchers([
-    { seq: '1', date: '2026-01-10', type: '记', summary: '购办公用品', code: '6602', debit: '200', credit: '' },
+    { seq: '1', date: '2026-01-10', type: '记', summary: '购办公用品', code: '660202', debit: '200', credit: '' },
     { seq: '1', date: '2026-01-10', type: '记', summary: '购办公用品', code: '1001', debit: '', credit: '200' },
     { seq: '2', date: '2026-01-11', type: '记', summary: '收货款', code: '1001', debit: '500', credit: '' },
     { seq: '2', date: '2026-01-11', type: '记', summary: '收货款', code: '6001', debit: '', credit: '400' },
