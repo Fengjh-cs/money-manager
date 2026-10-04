@@ -23,6 +23,7 @@ function createWindow() {
     minHeight: 700,
     backgroundColor: '#f4f6f9',
     autoHideMenuBar: true,
+    icon: path.join(__dirname, 'build', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -71,12 +72,11 @@ function registerIpc() {
       currencies: service.listCurrencies(),
     }),
 
-    'login': ({ username }) => {
-      const u = service.listUsers().find(x => x.username === username);
-      if (!u) throw new Error('用户不存在');
-      service.setUser(u);
-      return { user: u, hasLedger: service.hasLedger(), ledger: service.getLedger() };
+    'login': ({ username, password }) => {
+      const user = service.login(username, password);
+      return { user, hasLedger: service.hasLedger(), ledger: service.getLedger() };
     },
+    'password:change': ({ username, oldPassword, newPassword }) => service.changePassword(username, oldPassword, newPassword),
 
     'ledger:create': (opts) => service.createLedger(opts),
     'ledger:list': () => service.listLedgers(),

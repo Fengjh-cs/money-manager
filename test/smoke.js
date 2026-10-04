@@ -42,6 +42,15 @@ async function main() {
   const auditor = users.find(u => u.role === 'auditor');
   svc.setUser(accountant);
 
+  console.log('— 登录密码 —');
+  check('默认密码 123456 可登录', !!svc.login('会计', '123456'));
+  assertThrows('错误密码被拒', () => svc.login('会计', '错误'), '密码错误');
+  svc.changePassword('会计', '123456', 'abcd');
+  check('改密后新密码可登录', !!svc.login('会计', 'abcd'));
+  assertThrows('旧密码已失效', () => svc.login('会计', '123456'), '密码错误');
+  svc.changePassword('会计', 'abcd', '123456'); // 恢复默认
+  svc.setUser(accountant);
+
   console.log('— 期初余额 —');
   svc.setOpeningBalance('1001', '2026-01', '5000.00');
   svc.setOpeningBalance('4001', '2026-01', '-5000.00');

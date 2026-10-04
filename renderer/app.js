@@ -3,6 +3,7 @@
 /* ============ 全局状态 ============ */
 const state = {
   user: null,
+  loginUser: null,
   ledger: null,
   users: [],
   standards: [],
@@ -147,7 +148,7 @@ function render(html) {
 /* ---------- 登录 ---------- */
 function renderLogin() {
   const buttons = state.users.map(u => `
-    <button class="role-btn" data-action="login" data-arg="${esc(u.username)}">
+    <button class="role-btn ${state.loginUser === u.username ? 'selected' : ''}" data-action="login:select" data-arg="${esc(u.username)}">
       <span class="icon">${u.role === 'accountant' ? '📒' : '🔍'}</span>
       ${esc(u.username)}
       <div class="desc">${u.role === 'accountant' ? '录入、审核、记账、结账' : '只读查看、审计追踪'}</div>
@@ -156,8 +157,11 @@ function renderLogin() {
     <div class="login-wrap">
       <div class="login-card">
         <h1>记账程序</h1>
-        <div class="sub">请选择你的身份登录</div>
+        <div class="sub">选择身份并输入密码登录</div>
         <div class="role-btns">${buttons}</div>
+        <input type="password" id="login-password" placeholder="请输入密码" style="width:100%;margin:14px 0 10px">
+        <button class="primary" data-action="login:submit" style="width:100%">登录</button>
+        <p class="hint" style="margin-top:10px">首次登录默认密码:123456,登录后请在侧边栏「修改密码」</p>
       </div>
     </div>`);
 }
@@ -216,6 +220,7 @@ function renderApp() {
           <div>${esc(state.user.username)}</div>
           <div class="role">${state.user.role === 'accountant' ? '会计(可编辑)' : '审计(只读)'} · ${esc(state.ledger ? state.ledger.name : '')}</div>
           <button class="link" data-action="logout" style="color:#8fb0e0;margin-top:6px">退出登录</button>
+          <button class="link" data-action="password:open" style="color:#8fb0e0;margin-top:6px">修改密码</button>
         </div>
       </div>
       <div class="main" id="main-content">${viewHtml(state.nav)}</div>
@@ -712,6 +717,20 @@ async function loadAux() {
   document.getElementById('ax-item').innerHTML = `<option value="">(请选择)</option>` + state.auxItems.map(a => `<option value="${esc(a.id)}">${AUX_LABELS[a.type] || a.type}:${esc(a.name)}</option>`).join('');
 }
 
+function renderPasswordModal() {
+  render(`
+    <div class="modal-mask"><div class="modal">
+      <h2>修改密码(${esc(state.user ? state.user.username : '')})</h2>
+      <div class="form-row"><label>原密码</label><input type="password" id="pw-old"></div>
+      <div class="form-row"><label>新密码(至少 4 位)</label><input type="password" id="pw-new"></div>
+      <div class="form-row"><label>确认新密码</label><input type="password" id="pw-new2"></div>
+      <div class="actions">
+        <button class="primary" data-action="password:submit">保存</button>
+        <button data-action="modal:close">取消</button>
+      </div>
+    </div></div>`);
+}
+
 function renderAuxModal() {
   const typeOpts = Object.entries(AUX_LABELS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
   render(`
@@ -859,12 +878,36 @@ async function loadLedgers() {
 /* ============ 动作处理 ============ */
 async function handleAction(action, id, arg) {
   switch (action) {
-    case 'login': {
-      const r = await call('login', { username: arg });
-      state.user = r.user;
-      state.ledger = r.ledger;
-      if (r.hasLedger) { await refreshAccounts(); renderApp(); }
-      else renderSetup();
+    case 'login:select': {
+      state.loginUser = arg;
+      renderLogin();
+      break;
+    }
+    case 'login:submit': {
+      if (!state.loginUser) { toast('请先选择身份', 'err'); break; }
+      const password = document.getElementById('login-password').value;
+      if (!password) { toast('请输入密码', 'err'); break; }
+      try {
+        const r = await call('login', { username: state.loginUser, password });
+        state.user = r.user;
+        state.ledger = r.ledger;
+        state.loginUser = null;
+        if (r.hasLedger) { await refreshAccounts(); renderApp(); }
+        else renderSetup();
+      } catch (e) { toast(e.message, 'err'); }
+      break;
+    }
+    case 'password:open': renderPasswordModal(); break;
+    case 'password:submit': {
+      const oldPassword = document.getElementById('pw-old').value;
+      const newPassword = document.getElementById('pw-new').value;
+      const newPassword2 = document.getElementById('pw-new2').value;
+      if (newPassword !== newPassword2) { toast('两次输入的新密码不一致', 'err'); break; }
+      try {
+        await call('password:change', { username: state.user.username, oldPassword, newPassword });
+        toast('密码已修改', 'ok');
+        renderApp();
+      } catch (e) { toast(e.message, 'err'); }
       break;
     }
     case 'logout': {

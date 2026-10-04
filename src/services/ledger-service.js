@@ -32,6 +32,22 @@ function toSafeNumber(b) {
 }
 function dec(b) { return M.formatAmount(b).replace(/,/g, ''); } // 纯数字字符串(无千分位)
 
+/** 密码哈希:scrypt + 随机盐,存储为 "salt:hash" */
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+function verifyPassword(password, stored) {
+  if (!stored || typeof stored !== 'string') return false;
+  const [salt, hash] = stored.split(':');
+  if (!salt || !hash) return false;
+  const test = crypto.scryptSync(String(password), salt, 64).toString('hex');
+  const a = Buffer.from(hash, 'hex');
+  const b = Buffer.from(test, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 /**
  * 核心服务:会计规则 + 审计日志 + 快照/回滚 + 报表。
  * 所有写操作都要求当前用户为「会计」角色(审计只读)。
@@ -62,16 +78,24 @@ class LedgerService {
     return false;
   }
 
-  /** 默认用户(会计/审计)在初始化时就写入,确保首次登录(尚未建账)也能选身份 */
+  /** 默认用户(会计/审计)在初始化时就写入,确保首次登录(尚未建账)也能选身份;默认密码 123456 */
   _seedUsers() {
+    const t = now();
+    let changed = false;
     const n = this.db.get('SELECT COUNT(*) AS c FROM users').c;
     if (n === 0) {
-      const t = now();
-      this.db.run('INSERT OR IGNORE INTO users (id, username, password_hash, role, created_at) VALUES (?,?,?,?,?)', [uuid(), '会计', '', 'accountant', t]);
-      this.db.run('INSERT OR IGNORE INTO users (id, username, password_hash, role, created_at) VALUES (?,?,?,?,?)', [uuid(), '审计', '', 'auditor', t]);
-      return true;
+      this.db.run('INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?,?,?,?,?)', [uuid(), '会计', hashPassword('123456'), 'accountant', t]);
+      this.db.run('INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?,?,?,?,?)', [uuid(), '审计', hashPassword('123456'), 'auditor', t]);
+      changed = true;
     }
-    return false;
+    // 迁移:空密码用户补默认密码
+    for (const u of this.db.all('SELECT id, password_hash FROM users')) {
+      if (!u.password_hash) {
+        this.db.run('UPDATE users SET password_hash=? WHERE id=?', [hashPassword('123456'), u.id]);
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   _loadActiveLedger() {
@@ -116,6 +140,27 @@ class LedgerService {
   }
 
   setUser(user) { this.user = user; }
+
+  login(username, password) {
+    const u = this.db.get('SELECT * FROM users WHERE username=?', [username]);
+    if (!u) throw new Error('用户不存在');
+    if (!verifyPassword(password, u.password_hash)) throw new Error('密码错误');
+    this.user = { id: u.id, username: u.username, role: u.role };
+    this._audit('登录', 'user', u.id, null, { username: u.username, role: u.role });
+    this.db.save();
+    return this.user;
+  }
+
+  changePassword(username, oldPassword, newPassword) {
+    const u = this.db.get('SELECT * FROM users WHERE username=?', [username]);
+    if (!u) throw new Error('用户不存在');
+    if (!verifyPassword(oldPassword, u.password_hash)) throw new Error('原密码错误');
+    if (!newPassword || String(newPassword).length < 4) throw new Error('新密码至少 4 位');
+    this.db.run('UPDATE users SET password_hash=? WHERE id=?', [hashPassword(newPassword), u.id]);
+    this._audit('修改密码', 'user', u.id, null, null);
+    this.db.save();
+    return { changed: true };
+  }
 
   hasLedger() { return !!this.ledger; }
   getLedger() { return this.ledger; }

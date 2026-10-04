@@ -67,6 +67,7 @@ h2 { font-size: 16px; }
 .role-btns { display: flex; gap: 12px; }
 .role-btn { flex: 1; padding: 20px 10px; border: 1px solid var(--border); border-radius: 10px; background: #fff; text-align: center; font-size: 16px; }
 .role-btn:hover { border-color: var(--primary); background: #f4f8ff; }
+.role-btn.selected { border-color: var(--primary); background: #f4f8ff; box-shadow: 0 0 0 2px rgba(47,111,237,.18); }
 .role-btn .icon { font-size: 28px; display: block; margin-bottom: 6px; }
 .role-btn .desc { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
