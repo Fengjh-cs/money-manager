@@ -3,16 +3,42 @@
   "version": "0.1.0",
   "description": "复式记账桌面程序(面向会计与审计)",
   "main": "main.js",
-  "author": "",
+  "author": "Fengjh-cs",
   "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
-    "smoke": "node test/smoke.js"
+    "smoke": "node test/smoke.js",
+    "dist": "electron-builder --win"
   },
   "dependencies": {
     "sql.js": "^1.13.0"
   },
   "devDependencies": {
-    "electron": "^33.2.0"
+    "electron": "^33.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.fengjh.moneymanager",
+    "productName": "记账程序",
+    "directories": { "output": "dist" },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "src/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/sql.js/dist/*.wasm"
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }

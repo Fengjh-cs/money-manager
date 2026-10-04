@@ -129,7 +129,9 @@ const NAV = [
   { key: 'vouchers', label: '凭证管理' },
   { key: 'trial', label: '试算平衡' },
   { key: 'ledger', label: '明细账' },
+  { key: 'gl', label: '总账' },
   { key: 'reports', label: '财务报表' },
+  { key: 'closing', label: '期末处理' },
   { key: 'opening', label: '期初余额' },
   { key: 'rates', label: '汇率设置' },
   { key: 'audit', label: '审计日志' },
@@ -160,7 +162,9 @@ function viewHtml(key) {
     case 'vouchers': return voucherListHtml();
     case 'trial': return trialHtml();
     case 'ledger': return ledgerHtml();
+    case 'gl': return glHtml();
     case 'reports': return reportsHtml();
+    case 'closing': return closingHtml();
     case 'opening': return openingHtml();
     case 'rates': return ratesHtml();
     case 'audit': return auditHtml();
@@ -425,6 +429,58 @@ async function loadLedger() {
     ${lines ? `<table class="grid"><thead><tr><th>日期</th><th>凭证号</th><th>摘要</th><th>借方</th><th>贷方</th><th>余额</th></tr></thead><tbody>${lines}</tbody></table>` : '<div class="empty">该区间无发生额</div>'}`;
 }
 
+/* ---------- 总账 ---------- */
+function glHtml() {
+  const opts = leafAccounts().map(a => `<option value="${esc(a.id)}">${esc(a.code)} ${esc(a.name)}</option>`).join('');
+  return `
+    <div class="page-head"><h1>总账</h1></div>
+    <div class="panel">
+      <div class="toolbar">
+        <label>科目</label><select id="gl-account">${opts}</select>
+        <label>从</label><input id="gl-from" type="month" value="${state.voucherPeriod || currentPeriod()}" style="width:150px">
+        <label>到</label><input id="gl-to" type="month" value="${state.voucherPeriod || currentPeriod()}" style="width:150px">
+        <button class="primary" data-action="gl:load">查询</button>
+      </div>
+      <div id="gl-result"></div>
+    </div>`;
+}
+
+async function loadGl() {
+  const account = document.getElementById('gl-account').value;
+  const from = document.getElementById('gl-from').value;
+  const to = document.getElementById('gl-to').value;
+  const res = await call('report:generalLedger', { account_id: account, from, to });
+  const months = res.months.map(m => `<tr><td>${esc(m.period)}</td><td class="num">${fmt(m.debit)}</td><td class="num">${fmt(m.credit)}</td></tr>`).join('');
+  document.getElementById('gl-result').innerHTML = `
+    <div style="margin:8px 0">科目:${esc(res.account.code)} ${esc(res.account.name)}</div>
+    ${months ? `<table class="grid"><thead><tr><th>期间</th><th>借方合计</th><th>贷方合计</th></tr></thead><tbody>${months}</tbody></table>` : '<div class="empty">该区间无发生额</div>'}`;
+}
+
+/* ---------- 期末处理 ---------- */
+function closingHtml() {
+  return `
+    <div class="page-head"><h1>期末处理</h1></div>
+    <div class="panel">
+      <div class="toolbar">
+        <label>期间</label><input id="cl-period" type="month" value="${state.voucherPeriod || currentPeriod()}" style="width:150px">
+        ${isAccountant() ? `
+        <button class="primary" data-action="closing:carryForward">结转损益</button>
+        <button class="primary" data-action="closing:close">结账</button>
+        <button data-action="closing:unclose">反结账</button>` : '<span class="hint">审计角色为只读</span>'}
+      </div>
+      <p class="hint">期末流程:①「结转损益」生成结转凭证(草稿),请到「凭证管理」审核并记账 → ②「结账」锁定该期间。结账后该期间不能再修改。</p>
+      <div id="cl-list"></div>
+    </div>`;
+}
+
+async function loadClosing() {
+  const list = await call('period:list');
+  const rows = list.map(p => `<tr><td>${esc(p.period)}</td><td>${p.status === 'closed' ? '<span class="badge posted">已结账</span>' : '<span class="badge draft">开启</span>'}</td></tr>`).join('');
+  document.getElementById('cl-list').innerHTML = rows
+    ? `<table class="grid"><thead><tr><th>期间</th><th>状态</th></tr></thead><tbody>${rows}</tbody></table>`
+    : '<div class="empty">暂无期间记录</div>';
+}
+
 /* ---------- 财务报表 ---------- */
 function reportsHtml() {
   return `
@@ -673,7 +729,30 @@ async function handleAction(action, id, arg) {
     }
     case 'trial:load': loadTrial(); break;
     case 'ledger:load': loadLedger(); break;
+    case 'gl:load': loadGl(); break;
     case 'reports:load': loadReports(); break;
+    case 'closing:carryForward': {
+      const period = document.getElementById('cl-period').value;
+      if (!confirm(`确定对期间 ${period} 执行「结转损益」吗?系统将生成一张结转凭证(草稿)。`)) break;
+      try {
+        const v = await call('period:carryForward', period);
+        toast(`已生成结转凭证 ${v.voucher_no},请到「凭证管理」审核并记账`, 'ok');
+        loadClosing();
+      } catch (e) { toast(e.message, 'err'); }
+      break;
+    }
+    case 'closing:close': {
+      const period = document.getElementById('cl-period').value;
+      if (!confirm(`确定结账期间 ${period} 吗?结账后该期间不能再修改凭证。`)) break;
+      try { await call('period:close', period); toast('已结账', 'ok'); loadClosing(); } catch (e) { toast(e.message, 'err'); }
+      break;
+    }
+    case 'closing:unclose': {
+      const period = document.getElementById('cl-period').value;
+      if (!confirm(`确定反结账期间 ${period} 吗?`)) break;
+      try { await call('period:unclose', period); toast('已反结账', 'ok'); loadClosing(); } catch (e) { toast(e.message, 'err'); }
+      break;
+    }
     case 'opening:save': {
       const account = document.getElementById('ob-account').value;
       const dir = document.getElementById('ob-dir').value;
@@ -738,7 +817,9 @@ async function afterView(key) {
       case 'vouchers': await loadVoucherList(); break;
       case 'trial': await loadTrial(); break;
       case 'ledger': await loadLedger(); break;
+      case 'gl': await loadGl(); break;
       case 'reports': await loadReports(); break;
+      case 'closing': await loadClosing(); break;
       case 'opening': await loadOpening(); break;
       case 'rates': await loadRates(); break;
       case 'audit': await loadAudit(); break;

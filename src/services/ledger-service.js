@@ -20,6 +20,11 @@ function today() {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 function periodOf(date) { return String(date).slice(0, 7); }
+function lastDayOfPeriod(period) {
+  const [y, m] = period.split('-').map(Number);
+  const d = new Date(y, m, 0).getDate();
+  return `${period}-${String(d).padStart(2, '0')}`;
+}
 function toSafeNumber(b) {
   const LIMIT = BigInt(Number.MAX_SAFE_INTEGER);
   if (b > LIMIT || b < -LIMIT) throw new Error('金额超出系统可处理范围');
@@ -695,6 +700,45 @@ class LedgerService {
   }
 
   // ================= 期末 =================
+  /**
+   * 结转损益:把本期损益类科目的发生额结转至「本年利润」,生成一张结转凭证(草稿)。
+   * 收入类(贷方余额)→ 借收入/贷本年利润;费用类(借方余额)→ 借本年利润/贷费用。
+   */
+  carryForwardProfit(period) {
+    this._requireAccountant();
+    this._requirePeriodOpen(period);
+    const profitAcct = this.db.get("SELECT * FROM accounts WHERE ledger_id=? AND name='本年利润'", [this.ledger.id]);
+    if (!profitAcct) throw new Error('未找到「本年利润」科目');
+    const existing = this.db.get('SELECT id FROM vouchers WHERE ledger_id=? AND period=? AND source=?', [this.ledger.id, period, 'carry-forward']);
+    if (existing) throw new Error(`期间 ${period} 已生成结转损益凭证,请勿重复结转`);
+
+    const bal = this._signedBalances(period);
+    const entries = [];
+    let profit = 0n;
+    for (const a of this.db.all("SELECT * FROM accounts WHERE ledger_id=? AND category='pl' ORDER BY code", [this.ledger.id])) {
+      const s = bal[a.id] || { period_debit: 0n, period_credit: 0n };
+      const net = s.period_credit - s.period_debit; // 贷-借,正=收入(贷方余额)
+      if (net === 0n) continue;
+      profit += net;
+      if (net > 0n) entries.push({ summary: `结转损益:${a.name}`, account_id: a.id, debit: M.formatAmount(net).replace(/,/g, '') });
+      else entries.push({ summary: `结转损益:${a.name}`, account_id: a.id, credit: M.formatAmount(-net).replace(/,/g, '') });
+    }
+    if (entries.length === 0) throw new Error('本期无损益发生额,无需结转');
+    if (profit > 0n) entries.push({ summary: '结转本年利润', account_id: profitAcct.id, credit: M.formatAmount(profit).replace(/,/g, '') });
+    else if (profit < 0n) entries.push({ summary: '结转本年利润', account_id: profitAcct.id, debit: M.formatAmount(-profit).replace(/,/g, '') });
+
+    const voucher = this.createVoucher({
+      voucher_date: lastDayOfPeriod(period),
+      voucher_type: '记',
+      attachment_count: 0,
+      entries,
+      source: 'carry-forward',
+    });
+    this._audit('结转损益', 'period', period, null, { voucher_no: voucher.voucher_no, profit: M.formatAmount(profit).replace(/,/g, '') });
+    this.db.save();
+    return voucher;
+  }
+
   closePeriod(period) {
     this._requireAccountant();
     this.db.run(

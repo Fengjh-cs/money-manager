@@ -1,9 +1,16 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { openDatabase } = require('./src/db/database');
 const { LedgerService } = require('./src/services/ledger-service');
+
+// 自定义安全协议:用 app:// 加载本地资源,使 CSP 的 'self' 能正确生效
+const APP_SCHEME = 'app';
+protocol.registerSchemesAsPrivileged([
+  { scheme: APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
 
 let win = null;
 let service = null;
@@ -23,10 +30,10 @@ function createWindow() {
       sandbox: false,
     },
   });
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.loadURL(`${APP_SCHEME}://./index.html`);
 
-  // 开发辅助:把渲染进程的控制台与关键状态打印到终端,便于排障(打包后关闭)
-  if (!app.isPackaged) {
+  // 开发辅助:把渲染进程的控制台与关键状态打印到终端,便于排障(打包后默认关闭,可用 LEDGER_DEV_VERIFY=1 开启)
+  if (!app.isPackaged || process.env.LEDGER_DEV_VERIFY) {
     const rendererLogs = [];
     win.webContents.on('console-message', (event, level, message) => {
       const m = (event && typeof event === 'object' && 'message' in event) ? event.message : message;
@@ -109,6 +116,7 @@ function registerIpc() {
     'period:close': (period) => service.closePeriod(period),
     'period:unclose': (period) => service.unclosePeriod(period),
     'period:list': () => service.listPeriods(),
+    'period:carryForward': (period) => service.carryForwardProfit(period),
   };
 
   ipcMain.handle('api', (_event, method, payload) => {
@@ -123,6 +131,30 @@ function registerIpc() {
 }
 
 app.whenReady().then(async () => {
+  // 把 app:// 请求映射到 renderer 目录下的文件(用 fs 读取,兼容打包后的 asar)
+  const MIME = {
+    '.html': 'text/html; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.png': 'image/png',
+    '.ico': 'image/x-icon',
+  };
+  protocol.handle(APP_SCHEME, (request) => {
+    const url = new URL(request.url);
+    const rel = decodeURIComponent(url.pathname).replace(/^\//, '') || 'index.html';
+    const rendererRoot = path.join(__dirname, 'renderer');
+    let fp = path.normalize(path.join(rendererRoot, rel));
+    if (!fp.startsWith(rendererRoot + path.sep)) fp = path.join(rendererRoot, 'index.html');
+    try {
+      const data = fs.readFileSync(fp);
+      return new Response(data, {
+        headers: { 'content-type': MIME[path.extname(fp).toLowerCase()] || 'application/octet-stream' },
+      });
+    } catch (e) {
+      return new Response('Not found', { status: 404 });
+    }
+  });
+
   const dataDir = app.isPackaged
     ? path.join(app.getPath('userData'), 'data')
     : path.join(__dirname, 'data');

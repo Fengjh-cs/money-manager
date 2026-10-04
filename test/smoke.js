@@ -151,6 +151,16 @@ async function main() {
   const rev = svc.reverseVoucher(v2.id);
   check('冲销凭证已生成', rev.status === 'draft' && rev.entries.length === v2.entries.length);
 
+  console.log('— 结转损益 —');
+  // 当前 2026-01 已有一笔收入 6001 贷方 710.00,结转后应借 6001 710 / 贷 4103 710
+  const cf = svc.carryForwardProfit('2026-01');
+  check('结转凭证已生成', cf.status === 'draft' && cf.source === 'carry-forward');
+  const cfIncome = cf.entries.find(e => e.account_id === '6001');
+  const cfProfit = cf.entries.find(e => e.account_id === '4103');
+  check('收入科目被借方冲销 710', cfIncome && cfIncome.debit === 71000, JSON.stringify(cfIncome));
+  check('本年利润贷方 710', cfProfit && cfProfit.credit === 71000, JSON.stringify(cfProfit));
+  assertThrows('重复结转被拒绝', () => svc.carryForwardProfit('2026-01'), '已生成结转损益凭证');
+
   db.close();
   fs.rmSync(tmp, { recursive: true, force: true });
 
